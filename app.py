@@ -6,6 +6,7 @@ from flask import Flask, request, jsonify
 from config import Config
 from slack_client import verify_slack_signature
 from dispatcher import dispatch_app_mention
+from db import is_duplicate_event
 
 logging.basicConfig(level=Config.LOG_LEVEL)
 log = logging.getLogger(__name__)
@@ -30,6 +31,11 @@ def create_app() -> Flask:
             return jsonify({"challenge": payload.get("challenge")})
 
         if payload.get("type") == "event_callback":
+            event_id = payload.get("event_id")
+            if event_id and is_duplicate_event(event_id):
+                log.warning("Duplicate Slack event ignored: %s", event_id)
+                return "", 200
+
             event = payload.get("event", {})
             event_type = event.get("type")
 
