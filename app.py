@@ -32,7 +32,10 @@ def create_app() -> Flask:
             event_type = event.get("type")
 
             if event_type == "app_mention":
-                dispatch_app_mention(event)
+                try:
+                    dispatch_app_mention(event)
+                except Exception:
+                    log.exception("Unhandled error during event dispatch: %s", event)
 
         # Always respond quickly to Slack
         return "", 200

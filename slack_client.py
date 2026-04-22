@@ -21,9 +21,14 @@ def get_bot_user_id() -> str:
     """
     global _bot_user_id
     if not _bot_user_id:
-        resp = slack.auth_test()
-        _bot_user_id = resp["user_id"]
-        log.info("Resolved bot user id: %s", _bot_user_id)
+        try:
+            log.info("Resolving bot user ID via auth.test...")
+            resp = slack.auth_test()
+            _bot_user_id = resp["user_id"]
+            log.info("Resolved bot user id: %s", _bot_user_id)
+        except Exception as e:
+            log.critical("Failed to call auth.test. Bot cannot start without its user ID. Error: %s", e)
+            raise  # This is a fatal error.
     return _bot_user_id
 
 def verify_slack_signature(request: Request) -> bool:
