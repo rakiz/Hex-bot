@@ -42,7 +42,7 @@ def verify_slack_signature(request: Request) -> bool:
         log.warning("Missing Slack signature headers")
         return False
 
-    # Basic replay protection
+    # Reject requests older than 5 minutes to prevent replay attacks
     if abs(time.time() - int(timestamp)) > 60 * 5:
         log.warning("Slack request timestamp too old")
         return False
@@ -56,6 +56,7 @@ def verify_slack_signature(request: Request) -> bool:
         hashlib.sha256,
     ).hexdigest()
 
+    # compare_digest instead of == to prevent timing attacks
     if not hmac.compare_digest(my_sig, sig):
         log.warning("Slack signature mismatch")
         return False

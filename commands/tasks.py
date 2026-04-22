@@ -26,7 +26,8 @@ class TasksCommand(Command):
 
     def __init__(self, *, slack_client, logger):
         super().__init__(slack_client=slack_client, logger=logger)
-        # cache Slack user_id -> display_name
+        # Per-request cache: avoids duplicate users_info calls within one command.
+        # Will persist across requests once we have a DB (Phase 1).
         self._user_name_cache: Dict[str, str] = {}
 
     def _get_user_display_name(self, user_id: str) -> str:
@@ -59,6 +60,8 @@ class TasksCommand(Command):
 
     @staticmethod
     def _parse_bullet_line(line_text: str) -> List[Tuple[Optional[str], str]]:
+        # Returns a list because one bullet with multiple @mentions expands to
+        # one task per assignee, all with the same text.
         line = line_text.strip()
         if not line:
             return []
@@ -78,6 +81,7 @@ class TasksCommand(Command):
             for uid in mentions:
                 result.append((uid, task_text))
         else:
+            # No @mention: create an unassigned task so the text isn't silently dropped
             result.append((None, task_text))
         return result
 
@@ -108,7 +112,8 @@ class TasksCommand(Command):
             for line in bullets
         )
 
-        # If there's no bullets, consider the command line as a unique inlined task
+        # Inline form: "@Hex tasks @alice do this" — normalize to a bullet so the
+        # same _parse_bullet_line path handles both input styles.
         if not has_bullets:
             tokens = command_line.split()
             # Expecting: "<@BOTID> tasks xxx..."
@@ -153,7 +158,9 @@ class TasksCommand(Command):
             )
             return
 
-        # Set up the Google tasklist name for this channel
+        # One Google tasklist per Slack channel, created on demand.
+        # Falls back to GOOGLE_TASKS_LIST_ID (env var, default "@default") if the
+        # channel name can't be resolved.
         tasklist_id: Optional[str] = None
         try:
             info = self.slack.conversations_info(channel=channel)
@@ -172,53 +179,57 @@ class TasksCommand(Command):
         except Exception:
             permalink = None
 
-        created_count = 0
+        # Signal to the user that the bot has seen the message and is working on it
+        try:
+            self.slack.reactions_add(channel=channel, name="eyes", timestamp=ts)
+        except Exception as exc:
+            self.log.warning("reactions_add failed: %s", exc)
+
         sender_mention = f"<@{user}>"
-        summary_lines: List[str] = []
+        successes: List[str] = []
+        failures: List[str] = []
 
         for assignee_id, task_text in parsed_tasks:
-            # Default title for logging in case of early failure
             google_title = f"[unassigned] {task_text}"
-            notes = ""
-            if permalink:
-                notes = f"From Slack: {permalink}"
+            notes = f"From Slack: {permalink}" if permalink else ""
+            assignee_mention = f"<@{assignee_id}>" if assignee_id else "unassigned"
 
             try:
-                # Google title: readable name not a Slack ID
+                # Google title uses a readable name, not a raw Slack ID
                 if assignee_id is not None:
                     assignee_name = self._get_user_display_name(assignee_id)
                     google_title = f"[{assignee_name}] {task_text}"
 
-                create_task(
-                    title=google_title,
-                    notes=notes,
-                    tasklist_id=tasklist_id,
-                )
-                created_count += 1
+                create_task(title=google_title, notes=notes, tasklist_id=tasklist_id)
 
-                # Add to summary only on success
-                if assignee_id is not None:
-                    assignee_mention = f"<@{assignee_id}>"
-                else:
-                    assignee_mention = "unassigned"
-
-                summary_lines.append(
-                    f"{sender_mention} assigned the following task to {assignee_mention}: {task_text}"
+                # Only added to the reply after Google confirms the task was created
+                successes.append(
+                    f"✓ {sender_mention} → {assignee_mention}: {task_text}"
                 )
             except Exception as exc:
                 self.log.exception("Failed to create Google Task for %r: %s", google_title, exc)
+                failures.append(
+                    f"✗ {assignee_mention}: {task_text}"
+                )
 
-        if created_count > 0:
-            header = f"Created {created_count} Google Tasks in my list:"
-            text = header + "\n" + "\n".join(summary_lines)
+        # Build a single reply that reflects the actual outcome from Google
+        reply_lines: List[str] = []
+        if successes:
+            reply_lines.append(f"Created {len(successes)} task(s) in Google Tasks:")
+            reply_lines.extend(successes)
+        if failures:
+            reply_lines.append(f"Failed to create {len(failures)} task(s):")
+            reply_lines.extend(failures)
+
+        if reply_lines:
             self.slack.chat_postMessage(
                 channel=channel,
-                text=text,
+                text="\n".join(reply_lines),
                 thread_ts=ts,
             )
-        elif parsed_tasks:  # Only send failure message if we had tasks to begin with
-            self.slack.chat_postMessage(
-                channel=channel,
-                text="I tried to create tasks, but something went wrong and none were created. Please check my logs for details.",
-                thread_ts=ts,
-            )
+
+        # Remove the "eyes" reaction now that the summary has been posted
+        try:
+            self.slack.reactions_remove(channel=channel, name="eyes", timestamp=ts)
+        except Exception as exc:
+            self.log.warning("reactions_remove failed: %s", exc)

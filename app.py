@@ -1,4 +1,5 @@
 import logging
+import threading
 
 from flask import Flask, request, jsonify
 
@@ -21,9 +22,10 @@ def create_app() -> Flask:
         if not verify_slack_signature(request):
             return "invalid signature", 403
 
+        # force=True because Slack sometimes sends content-type: text/plain
         payload = request.get_json(force=True, silent=True) or {}
 
-        # URL verification handshake
+        # Slack sends this once when you first register the events URL
         if payload.get("type") == "url_verification":
             return jsonify({"challenge": payload.get("challenge")})
 
@@ -32,12 +34,15 @@ def create_app() -> Flask:
             event_type = event.get("type")
 
             if event_type == "app_mention":
-                try:
-                    dispatch_app_mention(event)
-                except Exception:
-                    log.exception("Unhandled error during event dispatch: %s", event)
+                # Slack expects a 200 within 3 seconds or it retries the event,
+                # which would create duplicate tasks. We fire-and-forget here and
+                # return immediately below.
+                threading.Thread(
+                    target=dispatch_app_mention,
+                    args=(event,),
+                    daemon=True,  # dies with the main process, no cleanup needed
+                ).start()
 
-        # Always respond quickly to Slack
         return "", 200
 
     return flask_app

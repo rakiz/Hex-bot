@@ -46,7 +46,15 @@ def dispatch_app_mention(event: dict) -> None:
     """
     Entry point for all app_mention events.
     Decodes subcommand & delegates to the appropriate Command.
+    Runs in a background thread — exceptions are logged, not re-raised.
     """
+    try:
+        _dispatch(event)
+    except Exception:
+        log.exception("Unhandled error during event dispatch: %s", event)
+
+
+def _dispatch(event: dict) -> None:
     channel = event.get("channel")
     user = event.get("user")
     ts = event.get("ts")
@@ -64,7 +72,6 @@ def dispatch_app_mention(event: dict) -> None:
     subcmd, cmd_line_idx = _find_command_line(lines, bot_user_id)
 
     if cmd_line_idx is None:
-        # We were mentioned but not in the "@Hex subcommand" pattern; ignore for now.
         return
 
     if not subcmd:
@@ -76,9 +83,7 @@ def dispatch_app_mention(event: dict) -> None:
         _send_unknown_command_help(channel, user, ts, subcmd)
         return
 
-    # Pass only the slice starting from the command line
     relevant_lines = lines[cmd_line_idx:]
-
     cmd = cmd_cls(slack_client=slack, logger=log)
     cmd.handle(channel=channel, user=user, ts=ts, text_lines=relevant_lines)
 

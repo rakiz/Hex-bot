@@ -184,6 +184,7 @@ Under **OAuth & Permissions → Bot Token Scopes**, add:
 - `groups:read` – read names of private channels the bot is in.
 - `im:read`, `mpim:read` – read IM/MPIM info if you ever use Hex there.
 - `users:read` – get display/real names via `users.info`.
+- `reactions:write` – add/remove emoji reactions to acknowledge messages.
 
 Then **Reinstall to Workspace** (Install App → Reinstall) to grant the new scopes.
 

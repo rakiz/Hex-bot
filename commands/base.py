@@ -31,13 +31,13 @@ class Command(ABC):
         """
         ...
 
-# Simple registry for commands
+# Command registry: populated at import time via @register_command.
+# New commands self-register by decorating their class — the dispatcher
+# never needs to be updated when a command is added.
 _COMMANDS: Dict[str, Type[Command]] = {}
 
 def register_command(cls: Type[Command]) -> Type[Command]:
-    """
-    Decorator to register a command class by its `name` attribute.
-    """
+    """Decorator to register a command class by its `name` attribute."""
     if not getattr(cls, "name", None):
         raise ValueError(f"Command class {cls.__name__} is missing 'name'")
     _COMMANDS[cls.name] = cls
