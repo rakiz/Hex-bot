@@ -3,9 +3,9 @@ from __future__ import annotations
 import logging
 from typing import List, Tuple, Optional
 
-from slack_client import get_bot_user_id, slack
-from commands.base import get_command
-import commands  # noqa: F401  # ensure registration side effects run
+from .slack_client import get_bot_user_id, slack
+from .commands.base import get_command
+from . import commands  # noqa: F401  # ensure registration side effects run
 
 log = logging.getLogger(__name__)
 

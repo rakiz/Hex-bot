@@ -3,10 +3,10 @@ import threading
 
 from flask import Flask, request, jsonify
 
-from config import Config
-from slack_client import verify_slack_signature
-from dispatcher import dispatch_app_mention
-from db import is_duplicate_event
+from .config import Config
+from .slack_client import verify_slack_signature
+from .dispatcher import dispatch_app_mention
+from .db import is_duplicate_event
 
 logging.basicConfig(level=Config.LOG_LEVEL)
 log = logging.getLogger(__name__)

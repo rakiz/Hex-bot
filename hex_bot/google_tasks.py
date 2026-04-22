@@ -4,7 +4,7 @@ from google.auth.exceptions import RefreshError
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 
-from config import Config
+from .config import Config
 
 # Module-level singletons: lazy-initialized on first API call, shared across requests.
 # NOTE: not shared across Gunicorn workers — will move to DB-backed cache in Phase 1.

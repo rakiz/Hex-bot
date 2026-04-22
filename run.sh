@@ -37,4 +37,4 @@ trap cleanup EXIT INT TERM
 
 echo ""
 echo "Starting Flask..."
-.venv/bin/python app.py
+.venv/bin/python -m hex_bot.app

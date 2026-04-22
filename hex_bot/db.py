@@ -8,7 +8,7 @@ from cryptography.fernet import Fernet
 from pymongo import MongoClient, ASCENDING
 from pymongo.errors import DuplicateKeyError
 
-from config import Config
+from .config import Config
 
 log = logging.getLogger(__name__)
 
