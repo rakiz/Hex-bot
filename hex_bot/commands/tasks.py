@@ -4,7 +4,7 @@ import re
 from typing import List, Tuple, Optional, Dict
 
 from .base import Command, register_command
-from google_tasks import create_task, get_or_create_tasklist
+from ..google_tasks import create_task, get_or_create_tasklist
 
 MENTION_PATTERN = re.compile(r"<@([A-Z0-9]+)>")
 

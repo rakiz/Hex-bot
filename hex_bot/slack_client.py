@@ -7,7 +7,7 @@ from typing import Optional
 from flask import Request
 from slack_sdk import WebClient
 
-from config import Config
+from .config import Config
 
 log = logging.getLogger(__name__)
 
