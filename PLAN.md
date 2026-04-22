@@ -4,9 +4,9 @@
 
 - **Un seul workspace Slack** (usage interne MongoDB) : pas de flow d'installation multi-tenant,
   le bot token reste une variable d'environnement.
-- **SQLite embarqué** à la place d'un serveur de base de données : un seul fichier sur disque,
-  zéro dépendance externe, suffisant pour le volume attendu (quelques centaines d'utilisateurs max).
-  Point à vérifier côté déploiement : le fichier SQLite doit vivre sur un **volume persistant** sous Kanopy.
+- **MongoDB** pour la persistance : Kanopy ne monte pas de volumes persistants, SQLite serait
+  perdu à chaque redémarrage de pod. MongoDB (Atlas ou cluster interne MongoDB) est la solution
+  naturelle. Driver `pymongo` (sync) pour rester cohérent avec Flask sync.
 
 ---
 
@@ -22,22 +22,31 @@
 
 ## Architecture cible
 
-### Stockage — SQLite
+### Stockage — MongoDB
 
-Deux tables simples :
+Une collection `users` :
 
-```sql
-CREATE TABLE users (
-    slack_user_id     TEXT PRIMARY KEY,
-    refresh_token_enc TEXT NOT NULL,   -- chiffré avec Fernet
-    tasklist_name     TEXT,            -- NULL = utilise le nom du channel par défaut
-    registered_at     TEXT NOT NULL
-);
+```json
+{
+  "_id": "U0ACC1Q8RRB",
+  "refresh_token_enc": "<chiffré Fernet>",
+  "tasklist_name": null,
+  "registered_at": "2026-04-22T18:00:00Z"
+}
 ```
 
-Le fichier SQLite (`hex.db`) est monté sur un volume persistant en production.
+Une collection `events` pour la déduplication Slack (TTL index sur `created_at`, expiration 10 min) :
+
+```json
+{
+  "_id": "Ev0ABC123",
+  "created_at": "2026-04-22T18:00:00Z"
+}
+```
+
 Les refresh tokens sont chiffrés avec `cryptography.fernet` avant écriture ;
 la clé Fernet vit dans une variable d'environnement (`FERNET_KEY`).
+La connexion MongoDB est configurée via `MONGODB_URI`.
 
 ### Nouvelles routes HTTP
 
@@ -69,14 +78,15 @@ la clé Fernet vit dans une variable d'environnement (`FERNET_KEY`).
 
 ## Phases
 
-### Phase 1 — Persistance (SQLite + chiffrement)
+### Phase 1 — Persistance (MongoDB + chiffrement)
 
 **Objectif :** poser les fondations sans rien casser.
 
-- Ajouter `cryptography` aux dépendances
-- Créer `db.py` : initialisation SQLite, fonctions CRUD pour les utilisateurs
-  (`get_user`, `upsert_user`, `delete_user`)
-- Ajouter `FERNET_KEY` à `config.py` et au `.env` local
+- Ajouter `pymongo` et `cryptography` aux dépendances
+- Créer `db.py` : connexion MongoDB, fonctions CRUD pour les utilisateurs
+  (`get_user`, `upsert_user`, `delete_user`) et déduplication des events Slack
+  (`is_duplicate_event`)
+- Ajouter `FERNET_KEY` et `MONGODB_URI` à `config.py` et au `.env` local
 - Migrer `google_tasks.py` pour utiliser le token de l'utilisateur
   plutôt que le token global (le token global reste en fallback le temps de la migration)
 
@@ -130,13 +140,12 @@ la clé Fernet vit dans une variable d'environnement (`FERNET_KEY`).
 ### Phase 4 — Déploiement Kanopy
 
 **À investiguer avec l'équipe infra :**
-- Type de workload Kanopy disponible (Deployment, StatefulSet ?)
-- Comment monter un volume persistant pour `hex.db`
+- Cluster MongoDB disponible (Atlas ? cluster interne ?)
 - Gestion des secrets (Kubernetes Secrets, Vault, autre ?)
 - Domaine HTTPS public pour les callbacks OAuth
 
 **Checklist technique :**
-- `Dockerfile` (base Python 3.10-slim, Gunicorn, pas de serveur de dev Flask)
+- `Dockerfile` (base Python 3.11-slim, Gunicorn, pas de serveur de dev Flask)
 - Variables d'environnement requises :
   ```
   SLACK_BOT_TOKEN
@@ -145,7 +154,7 @@ la clé Fernet vit dans une variable d'environnement (`FERNET_KEY`).
   GOOGLE_CLIENT_ID
   GOOGLE_CLIENT_SECRET
   FERNET_KEY              (généré une fois : python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
-  DATABASE_PATH           (chemin vers hex.db sur le volume persistant, ex: /data/hex.db)
+  MONGODB_URI             (ex: mongodb+srv://user:pass@cluster.mongodb.net/hex)
   PUBLIC_BASE_URL         (ex: https://hex-bot.mongodb.com, pour construire l'URL de callback OAuth)
   ```
 - Health check sur `/healthz`
@@ -155,7 +164,7 @@ la clé Fernet vit dans une variable d'environnement (`FERNET_KEY`).
 ## Ordre des dépendances
 
 ```
-Phase 1 (SQLite + chiffrement)
+Phase 1 (MongoDB + chiffrement)
     └── Phase 2 (Google OAuth par utilisateur)
             └── Phase 3 (list + config)
                     └── Phase 4 (Kanopy)
