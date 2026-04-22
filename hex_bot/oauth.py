@@ -30,6 +30,7 @@ def generate_oauth_url(slack_user_id: str) -> str:
     # We use Fernet for the state rather than a hand-rolled HMAC+timestamp because
     # Fernet tokens carry their own timestamp: decrypt(token, ttl=600) handles both
     # authentication and expiry in a single call, with no extra payload to sign.
+    log.info("OAuth URL generated for user=%s", slack_user_id)
     state = _fernet().encrypt(slack_user_id.encode()).decode()
     params = {
         "client_id": Config.GOOGLE_CLIENT_ID,

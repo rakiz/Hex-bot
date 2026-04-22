@@ -99,7 +99,9 @@ def _send_help_for_root(channel: str, user: str, ts: str) -> None:
             "- `@Hex register` — connect your Google Tasks account.\n"
             "- `@Hex unregister` — disconnect your Google Tasks account.\n"
             "- `@Hex status` — check your registration status.\n"
-            "- `@Hex tasks` — create Google Tasks from a mention.\n\n"
+            "- `@Hex tasks` — create Google Tasks from a mention.\n"
+            "- `@Hex list [name]` — list open tasks (current channel, or named tasklist).\n"
+            "- `@Hex config tasklist <name|default>` — set or reset your default tasklist.\n\n"
             "*Bullet form* (one task per line):\n"
             "`@Hex tasks`\n"
             "`* @alice do this`\n"
@@ -116,7 +118,7 @@ def _send_unknown_command_help(channel: str, user: str, ts: str, subcmd: str) ->
         user=user,
         text=(
             f"Unknown command: `{subcmd}`.\n"
-            "Available commands: `register`, `unregister`, `status`, `tasks`."
+            "Available commands: `register`, `unregister`, `status`, `tasks`, `list`, `config`."
         ),
         thread_ts=ts,
     )

@@ -129,3 +129,78 @@ def test_create_task_refresh_error_resets_service():
             gt.create_task("Buy milk", refresh_token="tok")
 
     assert "tok" not in gt._services
+
+
+# ---------------------------------------------------------------------------
+# find_tasklist
+# ---------------------------------------------------------------------------
+
+def test_find_tasklist_returns_id_when_found():
+    svc = _mock_service(items=[{"title": "general", "id": "L1"}, {"title": "other", "id": "L2"}])
+    with patch("hex_bot.google_tasks.build", return_value=svc):
+        result = gt.find_tasklist("general", refresh_token="tok")
+    assert result == "L1"
+
+
+def test_find_tasklist_returns_none_when_not_found():
+    svc = _mock_service(items=[{"title": "other", "id": "L2"}])
+    with patch("hex_bot.google_tasks.build", return_value=svc):
+        result = gt.find_tasklist("general", refresh_token="tok")
+    assert result is None
+
+
+def test_find_tasklist_does_not_create():
+    svc = _mock_service(items=[])
+    with patch("hex_bot.google_tasks.build", return_value=svc):
+        gt.find_tasklist("general", refresh_token="tok")
+    svc.tasklists.return_value.insert.assert_not_called()
+
+
+def test_find_tasklist_uses_cache():
+    gt._tasklist_cache[("tok", "general")] = "L_CACHED"
+    result = gt.find_tasklist("general", refresh_token="tok")
+    assert result == "L_CACHED"
+
+
+# ---------------------------------------------------------------------------
+# list_tasks
+# ---------------------------------------------------------------------------
+
+def test_list_tasks_returns_items():
+    svc = _mock_service()
+    svc.tasks.return_value.list.return_value.execute.return_value = {
+        "items": [{"title": "Buy milk"}, {"title": "Write tests"}]
+    }
+    with patch("hex_bot.google_tasks.build", return_value=svc):
+        result = gt.list_tasks("L1", refresh_token="tok")
+    assert len(result) == 2
+    assert result[0]["title"] == "Buy milk"
+
+
+def test_list_tasks_passes_show_completed_false():
+    svc = _mock_service()
+    svc.tasks.return_value.list.return_value.execute.return_value = {"items": []}
+    with patch("hex_bot.google_tasks.build", return_value=svc):
+        gt.list_tasks("L1", refresh_token="tok")
+    call_kwargs = svc.tasks.return_value.list.call_args[1]
+    assert call_kwargs["showCompleted"] is False
+
+
+def test_list_tasks_returns_empty_list_when_no_items():
+    svc = _mock_service()
+    svc.tasks.return_value.list.return_value.execute.return_value = {}
+    with patch("hex_bot.google_tasks.build", return_value=svc):
+        result = gt.list_tasks("L1", refresh_token="tok")
+    assert result == []
+
+
+def test_list_tasks_refresh_error_resets_service():
+    svc = MagicMock()
+    svc.tasks.return_value.list.return_value.execute.side_effect = RefreshError("expired")
+    gt._services["tok"] = svc
+
+    with patch("hex_bot.google_tasks.build", return_value=svc):
+        with pytest.raises(RefreshError):
+            gt.list_tasks("L1", refresh_token="tok")
+
+    assert "tok" not in gt._services
