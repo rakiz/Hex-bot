@@ -12,6 +12,8 @@ from .config import Config
 
 log = logging.getLogger(__name__)
 
+_EVENT_DEDUP_TTL_SECONDS = 600  # keep event IDs for 10 minutes to deduplicate Slack retries
+
 _client: Optional[MongoClient] = None
 _fernet: Optional[Fernet] = None
 
@@ -22,9 +24,8 @@ def _get_db():
         _client = MongoClient(Config.MONGODB_URI)
         db = _client[Config.MONGODB_DB_NAME]
 
-        # TTL index: Slack event IDs are kept for 10 minutes to deduplicate retries.
-        # MongoDB automatically deletes documents after expireAfterSeconds.
-        db.events.create_index("created_at", expireAfterSeconds=600)
+        # TTL index: MongoDB automatically deletes documents after expireAfterSeconds.
+        db.events.create_index("created_at", expireAfterSeconds=_EVENT_DEDUP_TTL_SECONDS)
 
         log.info("MongoDB connected (db=%s)", Config.MONGODB_DB_NAME)
     return _client[Config.MONGODB_DB_NAME]

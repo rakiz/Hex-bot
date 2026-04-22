@@ -18,6 +18,50 @@ def create_app() -> Flask:
     def healthz():
         return "ok", 200
 
+    @flask_app.route("/oauth/google/callback", methods=["GET"])
+    def oauth_google_callback():
+        # Lazy imports: these symbols are only needed in this one route; keeping
+        # them local avoids polluting the module namespace and makes the function
+        # easier to patch in tests without touching top-level imports.
+        from .oauth import verify_state, exchange_code
+        from .db import upsert_user
+        from .slack_client import slack
+
+        error = request.args.get("error")
+        if error:
+            log.warning("OAuth error from Google: %s", error)
+            return f"Google OAuth error: {error}. Please try @Hex register again.", 400
+
+        code = request.args.get("code")
+        state = request.args.get("state")
+        if not code or not state:
+            return "Missing code or state.", 400
+
+        try:
+            slack_user_id = verify_state(state)
+        except Exception:
+            log.warning("Invalid or expired OAuth state")
+            return "This link has expired or is invalid. Please try @Hex register again.", 400
+
+        try:
+            refresh_token = exchange_code(code)
+        except Exception:
+            log.exception("Token exchange failed")
+            return "Failed to connect your Google account. Please try again.", 500
+
+        upsert_user(slack_user_id, refresh_token)
+        log.info("User %s registered via OAuth", slack_user_id)
+
+        try:
+            slack.chat_postMessage(
+                channel=slack_user_id,  # passing a user_id opens a DM
+                text="✅ Your Google Tasks account is now connected to Hex! You can now use `@Hex tasks`.",
+            )
+        except Exception as exc:
+            log.warning("Failed to send DM after OAuth: %s", exc)
+
+        return "✅ Connected! You can close this tab and return to Slack.", 200
+
     @flask_app.route("/slack/events", methods=["POST"])
     def slack_events():
         if not verify_slack_signature(request):
