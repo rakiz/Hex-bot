@@ -17,6 +17,7 @@ class UnregisterCommand(Command):
             return
 
         delete_user(user)
+        self.log.info("UnregisterCommand: user=%s removed", user)
         self.slack.chat_postEphemeral(
             channel=channel,
             user=user,

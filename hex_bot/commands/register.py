@@ -7,6 +7,7 @@ class RegisterCommand(Command):
     name = "register"
 
     def handle(self, *, channel, user, ts, text_lines):
+        self.log.info("RegisterCommand: user=%s initiated OAuth", user)
         url = generate_oauth_url(user)
         ttl_minutes = STATE_TTL_SECONDS // 60
         # Ephemeral: the OAuth URL is personal and must not be visible to others in the channel.

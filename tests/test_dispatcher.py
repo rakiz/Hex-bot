@@ -17,7 +17,7 @@ def test_help_lists_all_commands():
     with patch.object(disp, "slack", mock_slack):
         disp._send_help_for_root(CHANNEL, USER, TS)
     text = mock_slack.chat_postEphemeral.call_args[1]["text"]
-    for cmd in ["register", "unregister", "status", "tasks"]:
+    for cmd in ["register", "unregister", "status", "tasks", "list", "config"]:
         assert cmd in text
 
 
@@ -46,7 +46,7 @@ def test_unknown_command_lists_available_commands():
     with patch.object(disp, "slack", mock_slack):
         disp._send_unknown_command_help(CHANNEL, USER, TS, "foobar")
     text = mock_slack.chat_postEphemeral.call_args[1]["text"]
-    for cmd in ["register", "unregister", "status", "tasks"]:
+    for cmd in ["register", "unregister", "status", "tasks", "list", "config"]:
         assert cmd in text
 
 
