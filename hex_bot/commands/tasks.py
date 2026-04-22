@@ -4,6 +4,7 @@ import re
 from typing import List, Tuple, Optional, Dict
 
 from .base import Command, register_command
+from ..db import get_refresh_token
 from ..google_tasks import create_task, get_or_create_tasklist
 
 MENTION_PATTERN = re.compile(r"<@([A-Z0-9]+)>")
@@ -26,8 +27,8 @@ class TasksCommand(Command):
 
     def __init__(self, *, slack_client, logger):
         super().__init__(slack_client=slack_client, logger=logger)
-        # Per-request cache: avoids duplicate users_info calls within one command.
-        # Will persist across requests once we have a DB (Phase 1).
+        # Avoids duplicate users_info API calls when the same user appears in
+        # multiple bullets within a single command invocation.
         self._user_name_cache: Dict[str, str] = {}
 
     def _get_user_display_name(self, user_id: str) -> str:
@@ -95,6 +96,19 @@ class TasksCommand(Command):
     ) -> None:
         self.log.info("TasksCommand.handle lines=%r", text_lines)
 
+        refresh_token = get_refresh_token(user)
+        if not refresh_token:
+            self.slack.chat_postEphemeral(
+                channel=channel,
+                user=user,
+                text=(
+                    f"<@{user}> You are not registered yet.\n"
+                    "Type `@Hex register` to connect your Google Tasks account."
+                ),
+                thread_ts=ts,
+            )
+            return
+
         if not text_lines:
             return
 
@@ -126,13 +140,13 @@ class TasksCommand(Command):
 
         if not has_bullets:
             usage = (
-                "I saw '@Hex tasks' but no task content. "
-                "Use bullets like:\n"
-                "@Hex tasks\n"
-                "* @alice do this\n"
-                "* @bob do that\n"
-                "or inline like:\n"
-                "@Hex tasks @alice @bob do that"
+                "I saw `@Hex tasks` but no task content.\n\n"
+                "*Bullet form* (one task per line):\n"
+                "`@Hex tasks`\n"
+                "`* @alice do this`\n"
+                "`* @alice @bob do that` ← creates one task per person\n\n"
+                "*Inline form* (single task):\n"
+                "`@Hex tasks @alice @bob do that`"
             )
             self.slack.chat_postMessage(
                 channel=channel,
@@ -159,14 +173,14 @@ class TasksCommand(Command):
             return
 
         # One Google tasklist per Slack channel, created on demand.
-        # Falls back to GOOGLE_TASKS_LIST_ID (env var, default "@default") if the
-        # channel name can't be resolved.
+        # If channel resolution fails we leave tasklist_id=None, which makes
+        # create_task fall back to "@default" (the user's default Google tasklist).
         tasklist_id: Optional[str] = None
         try:
             info = self.slack.conversations_info(channel=channel)
             ch = info.get("channel", {})
             channel_name = ch.get("name") or ch.get("id") or "Hex"
-            tasklist_id = get_or_create_tasklist(channel_name)
+            tasklist_id = get_or_create_tasklist(channel_name, refresh_token=refresh_token)
         except Exception as exc:
             self.log.exception("Failed to get channel name, using default list: %s", exc)
             tasklist_id = None
@@ -200,7 +214,7 @@ class TasksCommand(Command):
                     assignee_name = self._get_user_display_name(assignee_id)
                     google_title = f"[{assignee_name}] {task_text}"
 
-                create_task(title=google_title, notes=notes, tasklist_id=tasklist_id)
+                create_task(title=google_title, notes=notes, tasklist_id=tasklist_id, refresh_token=refresh_token)
 
                 # Only added to the reply after Google confirms the task was created
                 successes.append(

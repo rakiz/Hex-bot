@@ -83,6 +83,9 @@ def _dispatch(event: dict) -> None:
         _send_unknown_command_help(channel, user, ts, subcmd)
         return
 
+    # Pass from the command line itself (not cmd_line_idx+1): commands need
+    # text_lines[0] to parse their own invocation (e.g. inline arguments on the
+    # same line as "@Hex tasks").
     relevant_lines = lines[cmd_line_idx:]
     cmd = cmd_cls(slack_client=slack, logger=log)
     cmd.handle(channel=channel, user=user, ts=ts, text_lines=relevant_lines)
@@ -92,13 +95,17 @@ def _send_help_for_root(channel: str, user: str, ts: str) -> None:
         channel=channel,
         user=user,
         text=(
-            "Hi, I am Hex.\n\n"
-            "For now I know the following command:\n"
-            "- `@Hex tasks`: convert a list of bullets into tasks.\n\n"
-            "Example:\n"
-            "@Hex tasks\n"
-            "* @alice do this\n"
-            "* @bob do that"
+            "Hi, I am Hex. Here are the available commands:\n\n"
+            "- `@Hex register` — connect your Google Tasks account.\n"
+            "- `@Hex unregister` — disconnect your Google Tasks account.\n"
+            "- `@Hex status` — check your registration status.\n"
+            "- `@Hex tasks` — create Google Tasks from a mention.\n\n"
+            "*Bullet form* (one task per line):\n"
+            "`@Hex tasks`\n"
+            "`* @alice do this`\n"
+            "`* @alice @bob do that` ← creates one task per person\n\n"
+            "*Inline form* (single task):\n"
+            "`@Hex tasks @alice @bob do that`"
         ),
         thread_ts=ts,
     )
@@ -109,8 +116,7 @@ def _send_unknown_command_help(channel: str, user: str, ts: str, subcmd: str) ->
         user=user,
         text=(
             f"Unknown command: `{subcmd}`.\n"
-            "For now I only know:\n"
-            "- `@Hex tasks`"
+            "Available commands: `register`, `unregister`, `status`, `tasks`."
         ),
         thread_ts=ts,
     )

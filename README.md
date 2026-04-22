@@ -105,15 +105,19 @@ From your **Google Cloud project**:
 
 - `GOOGLE_CLIENT_ID`
 - `GOOGLE_CLIENT_SECRET`
-- `GOOGLE_REFRESH_TOKEN`
-- `GOOGLE_TASKS_LIST_ID` *(optional, default `@default`)* – fallback when per-channel lookup fails.
 
-### 3.3. MongoDB
+### 3.3. Public URL
+
+- `PUBLIC_BASE_URL` *(optional, default `http://localhost:8080`)* – base URL used to build the Google OAuth callback URI.
+  - In dev: `http://localhost:8080` works as-is (Google allows localhost for Desktop OAuth clients).
+  - In prod (Kanopy): set to the HTTPS domain, e.g. `https://hex-bot.mongodb.com`.
+
+### 3.4. MongoDB
 
 - `MONGODB_URI` – e.g. `mongodb+srv://user:pass@cluster.mongodb.net/`
 - `MONGODB_DB_NAME` *(optional, default `hex`)*
 
-### 3.4. Encryption
+### 3.5. Encryption
 
 - `FERNET_KEY` – symmetric key for encrypting Google refresh tokens at rest. Generate once with:
 
@@ -132,7 +136,9 @@ SLACK_BOT_USER_ID=U0ACK1M63S8
 
 GOOGLE_CLIENT_ID=...apps.googleusercontent.com
 GOOGLE_CLIENT_SECRET=...
-GOOGLE_REFRESH_TOKEN=ya29.a0AR...
+
+# Optional — defaults to http://localhost:8080
+# PUBLIC_BASE_URL=https://hex-bot.mongodb.com
 
 MONGODB_URI=mongodb+srv://...
 MONGODB_DB_NAME=hex
@@ -160,6 +166,7 @@ Under **OAuth & Permissions → Bot Token Scopes**, add:
 - `im:read`, `mpim:read` – read IM/MPIM info.
 - `users:read` – get display/real names via `users.info`.
 - `reactions:write` – add/remove emoji reactions to acknowledge messages.
+- `im:write` – open a DM to send registration confirmation.
 
 Then **Reinstall to Workspace** to apply new scopes.
 
@@ -191,17 +198,10 @@ In the target channel: `/invite @Hex`
 ### 5.3. Create OAuth Client ID
 
 1. **Credentials → Create Credentials → OAuth client ID** → **Desktop app**.
-2. Note the **Client ID** and **Client secret**.
-
-### 5.4. Get a refresh token
-
-```bash
-export GOOGLE_CLIENT_ID="..."
-export GOOGLE_CLIENT_SECRET="..."
-python scripts/get_refresh_token.py
-```
-
-Follow the browser flow. Copy the printed `REFRESH_TOKEN` into your `.env`.
+2. Under **Authorized redirect URIs**, add:
+   - `http://localhost:8080/oauth/google/callback` (for local dev)
+   - Your Kanopy HTTPS URL when deploying (Phase 4).
+3. Note the **Client ID** and **Client secret**.
 
 ---
 
@@ -224,7 +224,15 @@ Follow the browser flow. Copy the printed `REFRESH_TOKEN` into your `.env`.
 
    The script prints the ngrok public URL. Set it as the Slack Event Subscription Request URL if it has changed.
 
-4. In Slack, in your test channel:
+4. In Slack, register your Google account first:
+
+   ```text
+   @Hex register
+   ```
+
+   Click the link in the ephemeral message, complete the Google OAuth flow. Hex sends you a DM when it's done.
+
+5. Then create tasks:
 
    ```text
    @Hex tasks @you inline test
@@ -238,11 +246,21 @@ Follow the browser flow. Copy the printed `REFRESH_TOKEN` into your `.env`.
    * @you @someone another bullet
    ```
 
-**Expected behavior:**
+**Available commands:**
+
+| Command | Description |
+|---|---|
+| `@Hex register` | Connect your Google Tasks account (sends an OAuth link). |
+| `@Hex unregister` | Disconnect your Google Tasks account. |
+| `@Hex status` | Check whether you are registered and which tasklist is configured. |
+| `@Hex tasks` | Create Google Tasks from a bullet list or inline mention. |
+
+**Expected behavior for `@Hex tasks`:**
 
 - Hex adds 👀 to the message immediately.
 - After Google confirms, Hex removes 👀 and replies in thread with ✓/✗ per task.
-- A Google Tasks list named after the Slack channel is created (if it doesn't exist).
+- A Google Tasks list named after the Slack channel is created in your account (if it doesn't exist).
+- If you are not registered, Hex replies with an ephemeral message asking you to `@Hex register`.
 
 ---
 
@@ -258,7 +276,7 @@ Requires `MONGODB_URI` in the environment (or `.env`). Tests run against a `hex_
 
 ## 8. Current limitations & roadmap
 
-- All tasks go to **one Google account**. Per-user OAuth is Phase 2 (see `PLAN.md`).
-- No per-user Google auth or domain-wide delegation yet.
+- No `@Hex list` or `@Hex config` commands yet (Phase 3).
+- No Kanopy deployment yet (Phase 4).
 
-See `PLAN.md` for the full evolution plan (MongoDB persistence ✅, per-user OAuth, list/config commands, Kanopy deployment).
+See `PLAN.md` for the full evolution plan (MongoDB persistence ✅, per-user OAuth ✅, list/config commands, Kanopy deployment).

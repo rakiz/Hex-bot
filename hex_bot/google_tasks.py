@@ -1,4 +1,4 @@
-from typing import Optional, Dict
+from typing import Optional, Dict, Tuple
 
 from google.auth.exceptions import RefreshError
 from google.oauth2.credentials import Credentials
@@ -6,82 +6,92 @@ from googleapiclient.discovery import build
 
 from .config import Config
 
-# Module-level singletons: lazy-initialized on first API call, shared across requests.
-# NOTE: not shared across Gunicorn workers — will move to DB-backed cache in Phase 1.
-_tasks_service = None  # type: Optional[object]
-_tasklist_cache: Dict[str, str] = {}  # channel_name -> tasklist_id
+# Per-user service and tasklist caches, keyed by refresh token.
+# Each registered user gets their own Google API session.
+_PAGE_SIZE = 100  # max tasklists per page (Google Tasks API limit is 100)
+_GOOGLE_DEFAULT_TASKLIST = "@default"  # Google's special ID for the user's default tasklist
+
+_services: Dict[str, object] = {}
+_tasklist_cache: Dict[Tuple[str, str], str] = {}  # (refresh_token, channel_name) -> tasklist_id
 
 
-def _get_service():
-    global _tasks_service
-    if _tasks_service is None:
+def _get_service(refresh_token: str):
+    if refresh_token not in _services:
         creds = Credentials(
-            None,  # no access token — the library will fetch one using the refresh token
-            refresh_token=Config.GOOGLE_REFRESH_TOKEN,
+            None,  # no access token — the library fetches one using the refresh token
+            refresh_token=refresh_token,
             token_uri="https://oauth2.googleapis.com/token",
             client_id=Config.GOOGLE_CLIENT_ID,
             client_secret=Config.GOOGLE_CLIENT_SECRET,
             scopes=["https://www.googleapis.com/auth/tasks"],
         )
-        _tasks_service = build(
+        _services[refresh_token] = build(
             "tasks",
             "v1",
             credentials=creds,
             cache_discovery=False,  # avoids a network hit to the discovery endpoint on cold start
         )
-    return _tasks_service
+    return _services[refresh_token]
 
 
-def _reset_service() -> None:
-    global _tasks_service, _tasklist_cache
-    # Also clear the tasklist cache: those IDs are tied to the credentials being reset
-    _tasks_service = None
-    _tasklist_cache = {}
+def _reset_service(refresh_token: str) -> None:
+    _services.pop(refresh_token, None)
+    # Evict tasklist cache entries for this token too: the tasklist IDs themselves
+    # are stable, but if we need to reauthenticate we prefer a clean slate rather
+    # than acting on state that was established under a broken credential.
+    for key in list(_tasklist_cache):
+        if key[0] == refresh_token:
+            del _tasklist_cache[key]
 
 
-def get_or_create_tasklist(title: str) -> str:
-    if title in _tasklist_cache:
-        return _tasklist_cache[title]
+def get_or_create_tasklist(title: str, *, refresh_token: str) -> str:
+    cache_key = (refresh_token, title)
+    if cache_key in _tasklist_cache:
+        return _tasklist_cache[cache_key]
 
     try:
-        service = _get_service()
+        service = _get_service(refresh_token)
         page_token = None
         while True:
             result = service.tasklists().list(
-                maxResults=100,
+                maxResults=_PAGE_SIZE,
                 pageToken=page_token,
             ).execute()
             for item in result.get("items", []):
                 if item.get("title") == title:
                     tasklist_id = item["id"]
-                    _tasklist_cache[title] = tasklist_id
+                    _tasklist_cache[cache_key] = tasklist_id
                     return tasklist_id
-
             page_token = result.get("nextPageToken")
             if not page_token:
                 break
 
         created = service.tasklists().insert(body={"title": title}).execute()
         tasklist_id = created["id"]
-        _tasklist_cache[title] = tasklist_id
+        _tasklist_cache[cache_key] = tasklist_id
         return tasklist_id
     except RefreshError:
-        _reset_service()
+        _reset_service(refresh_token)
         raise
 
 
-def create_task(title: str, notes: str = "", tasklist_id: Optional[str] = None) -> dict:
+def create_task(
+    title: str,
+    notes: str = "",
+    tasklist_id: Optional[str] = None,
+    *,
+    refresh_token: str,  # keyword-only: prevents accidental positional misuse with the other str params
+) -> dict:
     try:
-        service = _get_service()
+        service = _get_service(refresh_token)
         body = {"title": title}
         if notes:
             body["notes"] = notes
-
         task = service.tasks().insert(
-            tasklist=tasklist_id or Config.GOOGLE_TASKS_LIST_ID,
+            tasklist=tasklist_id or _GOOGLE_DEFAULT_TASKLIST,
             body=body,
         ).execute()
         return task
     except RefreshError:
-        _reset_service()
+        _reset_service(refresh_token)
         raise

@@ -14,9 +14,10 @@ class Config:
     # Google Tasks
     GOOGLE_CLIENT_ID = os.environ["GOOGLE_CLIENT_ID"]
     GOOGLE_CLIENT_SECRET = os.environ["GOOGLE_CLIENT_SECRET"]
-    GOOGLE_REFRESH_TOKEN = os.environ["GOOGLE_REFRESH_TOKEN"]
-    # Fallback when no per-user tasklist_id is available
-    GOOGLE_TASKS_LIST_ID = os.environ.get("GOOGLE_TASKS_LIST_ID", "@default")
+
+    # Public base URL used to build the OAuth callback URI.
+    # In dev: http://localhost:8080 (default). In prod: the Kanopy HTTPS domain.
+    PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "http://localhost:8080")
 
     # MongoDB
     MONGODB_URI = os.environ["MONGODB_URI"]
