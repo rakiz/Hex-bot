@@ -1,4 +1,7 @@
 import os
+from dotenv import load_dotenv
+
+load_dotenv()  # no-op if .env doesn't exist (production)
 
 class Config:
     # Slack

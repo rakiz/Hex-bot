@@ -3,15 +3,6 @@ set -e
 
 cd "$(dirname "$0")"
 
-if [ ! -f .env ]; then
-  echo "ERROR: .env not found. Create it from the README." >&2
-  exit 1
-fi
-
-set -a
-source .env
-set +a
-
 # Start ngrok in background and capture its PID
 ngrok http 8080 --log=stdout > /tmp/hex-ngrok.log 2>&1 &
 NGROK_PID=$!
