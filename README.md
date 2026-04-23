@@ -3,9 +3,9 @@
 
 **Hex** is a small Python/Flask bot that:
 
-- Listens for `@Hex tasks` mentions in Slack.
+- Listens for `@Hex` mentions in Slack.
 - Parses inline or bullet-form task descriptions with `@mentions`.
-- Creates one **Google Task per assignee**, grouped into a **Google Tasks list per Slack channel**.
+- Creates one **Google Task per assignee**, in **that assignee's own Google account**, grouped into a **Google Tasks list per Slack channel**.
 - Replies in Slack summarizing who assigned what to whom (only after Google confirms).
 
 This document captures how the project works and how to re-create all the required configuration (Slack, Google, local dev) so Future‑You doesn't have to reverse-engineer it.
@@ -34,13 +34,14 @@ This document captures how the project works and how to re-create all the requir
 3. Hex (Flask app) parses each bullet / inline line → one `(assignee_id, task_text)` pair per `@mention`.
 4. Hex looks up human‑readable names (`users.info`) and the channel name (`conversations.info`).
 5. Hex adds a 👀 reaction to acknowledge receipt, then creates one **Google Task per assignee**:
+   - Each task goes into **the assignee's own Google account** (looked up by their Slack user ID).
    - `title = "[Display Name] {task_text}"`
    - `notes` include the Slack permalink.
-   - Tasks go into a **Google Tasks list whose title = Slack channel name** (created on demand).
+   - Tasks go into a **Google Tasks list whose title = Slack channel name** (created on demand in each assignee's account).
 6. After Google confirms each task, Hex removes the 👀 reaction and replies in the Slack thread with a per-task ✓/✗ summary.
 
-**Important:**  
-In the current version, **all tasks go to one Google account** (the one used for the OAuth setup). `@mentions` drive title/summary text, not which Google account receives the task.
+**Important:**
+The **assignee** must be registered with `@Hex register` (not the sender). If an assignee is not registered, Hex reports a failure for their task and continues with the others.
 
 ---
 
@@ -50,7 +51,7 @@ In the current version, **all tasks go to one Google account** (the one used for
 hex-bot/
   hex_bot/
     __init__.py
-    app.py               # Flask entrypoint (/slack/events, /healthz)
+    app.py               # Flask entrypoint (/slack/events, /healthz, /oauth/google/callback)
     config.py            # Central config (reads env vars + .env)
     slack_client.py      # Slack WebClient + signature verification
     dispatcher.py        # Routes app_mention events to subcommands
@@ -58,32 +59,50 @@ hex-bot/
     google_tasks.py      # Google Tasks client + tasklist helpers
     commands/
       __init__.py
-      base.py            # Command base class + registry
+      base.py            # Command base class + registry (@register_command decorator)
       tasks.py           # "@Hex tasks" command
+      register.py        # "@Hex register" command (starts Google OAuth flow)
+      unregister.py      # "@Hex unregister" command
+      status.py          # "@Hex status" command
+      list.py            # "@Hex list [name]" command
+      config.py          # "@Hex config tasklist <name|default>" command
   tests/
     __init__.py
     conftest.py          # pytest fixtures (MongoDB hex_test database)
     test_db.py           # MongoDB CRUD and event deduplication tests
     test_parsing.py      # Bullet/inline parsing tests
     test_signature.py    # Slack signature verification tests
+    test_slack_client.py # Bot user ID caching tests
+    test_oauth.py        # OAuth URL generation / state verification tests
+    test_google_tasks.py # Google Tasks client tests
+    test_app.py          # Flask endpoint tests (URL verification, OAuth callback)
+    test_dispatcher.py   # Command routing tests
+    test_commands.py     # register / unregister / status command tests
+    test_commands_tasks.py  # tasks command tests (parsing, per-assignee logic)
+    test_commands_list_config.py  # list and config command tests
   scripts/
     get_refresh_token.py # One-off helper to obtain a Google refresh token
-  run.sh                 # Start ngrok + Flask locally
+  Dockerfile             # Production image (python:3.13-slim + gunicorn)
+  build.sh               # Build the Docker image locally
+  run.sh                 # Start ngrok + Flask locally (--docker flag available)
   test.sh                # Run the pytest suite
-  requirements.txt
+  requirements.txt       # Production dependencies
+  requirements-dev.txt   # Dev/test dependencies (-r requirements.txt + pytest)
   pytest.ini
   .env                   # Local secrets (never committed)
 ```
 
 Key modules:
 
-- **`app.py`** – `/slack/events` endpoint: URL verification, signature check, event deduplication (MongoDB TTL), dispatches `app_mention` in a background thread to avoid Slack's 3s timeout.
+- **`app.py`** – `/slack/events` endpoint: URL verification, signature check, event deduplication (MongoDB TTL), dispatches `app_mention` in a background thread to avoid Slack's 3s timeout. `/oauth/google/callback` handles the OAuth redirect from Google.
 - **`config.py`** – reads all env vars; calls `load_dotenv()` so `.env` is loaded automatically.
 - **`db.py`** – MongoDB persistence: user CRUD with Fernet-encrypted refresh tokens, event dedup via TTL collection (10 min window).
 - **`slack_client.py`** – `WebClient`, `verify_slack_signature`, `get_bot_user_id`.
 - **`dispatcher.py`** – finds the `@Hex <command>` line, routes to the matching command.
-- **`commands/tasks.py`** – parses bullets/inline, resolves names, calls Google Tasks, posts per-task summary.
-- **`google_tasks.py`** – OAuth2 refresh-token client, tasklist cache, `create_task`.
+- **`commands/tasks.py`** – parses bullets/inline, resolves names, calls Google Tasks per assignee, posts per-task summary.
+- **`commands/list.py`** – lists open tasks from a Google Tasks list (by channel name, configured default, or explicit name).
+- **`commands/config.py`** – sets or resets the user's default tasklist name.
+- **`google_tasks.py`** – OAuth2 refresh-token client, tasklist cache (per token), `create_task`, `list_tasks`.
 
 ---
 
@@ -110,7 +129,7 @@ From your **Google Cloud project**:
 
 - `PUBLIC_BASE_URL` *(optional, default `http://localhost:8080`)* – base URL used to build the Google OAuth callback URI.
   - In dev: `http://localhost:8080` works as-is (Google allows localhost for Desktop OAuth clients).
-  - In prod (Kanopy): set to the HTTPS domain, e.g. `https://hex-bot.mongodb.com`.
+  - In prod: set to your public HTTPS domain.
 
 ### 3.4. MongoDB
 
@@ -138,7 +157,7 @@ GOOGLE_CLIENT_ID=...apps.googleusercontent.com
 GOOGLE_CLIENT_SECRET=...
 
 # Optional — defaults to http://localhost:8080
-# PUBLIC_BASE_URL=https://hex-bot.mongodb.com
+# PUBLIC_BASE_URL=https://your-bot-domain.example.com
 
 MONGODB_URI=mongodb+srv://...
 MONGODB_DB_NAME=hex
@@ -200,7 +219,7 @@ In the target channel: `/invite @Hex`
 1. **Credentials → Create Credentials → OAuth client ID** → **Desktop app**.
 2. Under **Authorized redirect URIs**, add:
    - `http://localhost:8080/oauth/google/callback` (for local dev)
-   - Your Kanopy HTTPS URL when deploying (Phase 4).
+   - Your production HTTPS URL when deploying.
 3. Note the **Client ID** and **Client secret**.
 
 ---
@@ -211,8 +230,11 @@ In the target channel: `/invite @Hex`
 
    ```bash
    python3.13 -m venv .venv
-   .venv/bin/pip install -r requirements.txt
+   .venv/bin/pip install -r requirements-dev.txt
    ```
+
+   `requirements.txt` contains production dependencies only (used by the Docker image).
+   `requirements-dev.txt` adds pytest on top — use it for local development and running tests.
 
 2. Create `.env` (see Section 3).
 
@@ -222,15 +244,21 @@ In the target channel: `/invite @Hex`
    ./run.sh
    ```
 
+   Or with Docker (builds image first if needed):
+
+   ```bash
+   ./run.sh --docker
+   ```
+
    The script prints the ngrok public URL. Set it as the Slack Event Subscription Request URL if it has changed.
 
-4. In Slack, register your Google account first:
+4. Each user who wants tasks created in their Google account must register first:
 
    ```text
    @Hex register
    ```
 
-   Click the link in the ephemeral message, complete the Google OAuth flow. Hex sends you a DM when it's done.
+   Click the link in the ephemeral message, complete the Google OAuth flow. Hex sends a DM when it's done.
 
 5. Then create tasks:
 
@@ -254,13 +282,46 @@ In the target channel: `/invite @Hex`
 | `@Hex unregister` | Disconnect your Google Tasks account. |
 | `@Hex status` | Check whether you are registered and which tasklist is configured. |
 | `@Hex tasks` | Create Google Tasks from a bullet list or inline mention. |
+| `@Hex list [name]` | List open tasks (current channel, configured default, or named tasklist). |
+| `@Hex config tasklist <name\|default>` | Set or reset your default tasklist name. |
 
 **Expected behavior for `@Hex tasks`:**
 
 - Hex adds 👀 to the message immediately.
 - After Google confirms, Hex removes 👀 and replies in thread with ✓/✗ per task.
-- A Google Tasks list named after the Slack channel is created in your account (if it doesn't exist).
-- If you are not registered, Hex replies with an ephemeral message asking you to `@Hex register`.
+- A Google Tasks list named after the Slack channel is created in the **assignee's** Google account (if it doesn't exist).
+- The **sender** does not need to be registered — only the **assignees** do.
+- If an assignee is not registered, Hex reports `✗` for their task and continues with the rest.
+
+**Parsing rules — what counts as a task:**
+
+| Input line | Result |
+|---|---|
+| `* @alice fix the bug` | 1 task for alice: _"fix the bug"_ |
+| `* @alice @bob fix the bug` | 2 tasks: one for alice, one for bob — same text |
+| `* fix @alice the bug` | 1 task for alice: _"fix the bug"_ (mention position doesn't matter) |
+| `* fix the bug` | ignored — no assignee, no task |
+| `* @alice` | ignored — no task text |
+| `context line` | ignored — plain text without mention |
+| `@Hex tasks @alice do this` | inline form: 1 task for alice (no bullet needed) |
+
+Each line with `@mention` creates one task per mentioned user. All mentions are stripped from the task title regardless of where they appear in the line.
+
+**⚠️ Free-text lines with mentions also create tasks.** Any line that contains an `@mention` — even without a bullet prefix — is treated as a task. The task title is the entire line with all mentions removed. For example:
+
+```
+@Hex tasks
+Please @alice review the auth code and @bob fix the login bug.
+Context line with no mention — this is ignored.
+```
+
+Creates two tasks with the title `"Please  review the auth code and  fix the login bug."` (the mention text is stripped, leaving gaps). Use the bullet form for clean task titles:
+
+```
+@Hex tasks
+* @alice review the auth code
+* @bob fix the login bug
+```
 
 ---
 
@@ -272,11 +333,10 @@ In the target channel: `/invite @Hex`
 
 Requires `MONGODB_URI` in the environment (or `.env`). Tests run against a `hex_test` database that is wiped after each test.
 
+The suite has 109 tests covering: command parsing, per-assignee task creation, Google Tasks client (with RefreshError handling), OAuth state management, Slack signature verification, MongoDB encryption/dedup, and all six commands.
+
 ---
 
-## 8. Current limitations & roadmap
+## 8. Roadmap
 
-- No `@Hex list` or `@Hex config` commands yet (Phase 3).
-- No Kanopy deployment yet (Phase 4).
-
-See `PLAN.md` for the full evolution plan (MongoDB persistence ✅, per-user OAuth ✅, list/config commands, Kanopy deployment).
+See `PLAN.md` for the full evolution plan (MongoDB persistence ✅, per-user OAuth ✅, list/config commands ✅, Docker ✅).

@@ -9,7 +9,7 @@ from ..google_tasks import find_tasklist, list_tasks, _MAX_LIST_TASKS
 class ListCommand(Command):
     name = "list"
 
-    def handle(self, *, channel, user, ts, text_lines):
+    def handle(self, *, channel, user, ts, thread_ts=None, text_lines):
         self.log.info("ListCommand: user=%s channel=%s", user, channel)
         refresh_token = get_refresh_token(user)
         if not refresh_token:
@@ -18,9 +18,9 @@ class ListCommand(Command):
                 user=user,
                 text=(
                     f"<@{user}> You are not registered.\n"
-                    "Type `@Hex register` to connect your Google Tasks account."
+                    'Type "@Hex register" to connect your Google Tasks account.'
                 ),
-                thread_ts=ts,
+                thread_ts=thread_ts,
             )
             return
 
@@ -28,7 +28,7 @@ class ListCommand(Command):
         tokens = text_lines[0].split() if text_lines else []
         explicit_name = " ".join(tokens[2:]).strip() if len(tokens) >= 3 else None
 
-        tasklist_title = self._resolve_tasklist_title(channel, user, ts, explicit_name)
+        tasklist_title = self._resolve_tasklist_title(channel, user, thread_ts, explicit_name)
         if tasklist_title is None:
             return  # error already sent
 
@@ -39,7 +39,7 @@ class ListCommand(Command):
                 channel=channel,
                 user=user,
                 text=f"<@{user}> No tasklist named *{tasklist_title}* found in your Google Tasks.",
-                thread_ts=ts,
+                thread_ts=thread_ts,
             )
             return
 
@@ -49,7 +49,7 @@ class ListCommand(Command):
                 channel=channel,
                 user=user,
                 text=f"<@{user}> No open tasks in *{tasklist_title}*.",
-                thread_ts=ts,
+                thread_ts=thread_ts,
             )
             return
 
@@ -65,14 +65,14 @@ class ListCommand(Command):
             channel=channel,
             user=user,
             text="\n".join(lines),
-            thread_ts=ts,
+            thread_ts=thread_ts,
         )
 
     def _resolve_tasklist_title(
         self,
         channel: str,
         user: str,
-        ts: str,
+        thread_ts: Optional[str],
         explicit_name: Optional[str],
     ) -> Optional[str]:
         """
@@ -107,6 +107,6 @@ class ListCommand(Command):
                 f"<@{user}> I can't determine which tasklist to show.\n"
                 "Use `@Hex list <name>` or set a default with `@Hex config tasklist <name>`."
             ),
-            thread_ts=ts,
+            thread_ts=thread_ts,
         )
         return None

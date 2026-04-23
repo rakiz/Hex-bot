@@ -6,7 +6,7 @@ from ..oauth import generate_oauth_url, STATE_TTL_SECONDS
 class RegisterCommand(Command):
     name = "register"
 
-    def handle(self, *, channel, user, ts, text_lines):
+    def handle(self, *, channel, user, ts, thread_ts=None, text_lines):
         self.log.info("RegisterCommand: user=%s initiated OAuth", user)
         url = generate_oauth_url(user)
         ttl_minutes = STATE_TTL_SECONDS // 60
@@ -19,5 +19,5 @@ class RegisterCommand(Command):
                 f"{url}\n\n"
                 f"_This link expires in {ttl_minutes} minutes._"
             ),
-            thread_ts=ts,
+            thread_ts=thread_ts,
         )

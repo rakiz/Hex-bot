@@ -1,0 +1,13 @@
+.venv/
+.env
+.git/
+.githooks/
+tests/
+__pycache__/
+*.pyc
+*.md
+pytest.ini
+test.sh
+run.sh
+scripts/
+requirements-dev.txt

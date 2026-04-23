@@ -15,7 +15,7 @@ TS = "1234567890.000"
 def test_help_lists_all_commands():
     mock_slack = MagicMock()
     with patch.object(disp, "slack", mock_slack):
-        disp._send_help_for_root(CHANNEL, USER, TS)
+        disp._send_help_for_root(CHANNEL, USER, TS, None)
     text = mock_slack.chat_postEphemeral.call_args[1]["text"]
     for cmd in ["register", "unregister", "status", "tasks", "list", "config"]:
         assert cmd in text
@@ -24,7 +24,7 @@ def test_help_lists_all_commands():
 def test_help_shows_tasks_example():
     mock_slack = MagicMock()
     with patch.object(disp, "slack", mock_slack):
-        disp._send_help_for_root(CHANNEL, USER, TS)
+        disp._send_help_for_root(CHANNEL, USER, TS, None)
     text = mock_slack.chat_postEphemeral.call_args[1]["text"]
     assert "@Hex tasks" in text
 
@@ -36,7 +36,7 @@ def test_help_shows_tasks_example():
 def test_unknown_command_includes_subcmd_name():
     mock_slack = MagicMock()
     with patch.object(disp, "slack", mock_slack):
-        disp._send_unknown_command_help(CHANNEL, USER, TS, "foobar")
+        disp._send_unknown_command_help(CHANNEL, USER, TS, "foobar", None)
     text = mock_slack.chat_postEphemeral.call_args[1]["text"]
     assert "foobar" in text
 
@@ -44,7 +44,7 @@ def test_unknown_command_includes_subcmd_name():
 def test_unknown_command_lists_available_commands():
     mock_slack = MagicMock()
     with patch.object(disp, "slack", mock_slack):
-        disp._send_unknown_command_help(CHANNEL, USER, TS, "foobar")
+        disp._send_unknown_command_help(CHANNEL, USER, TS, "foobar", None)
     text = mock_slack.chat_postEphemeral.call_args[1]["text"]
     for cmd in ["register", "unregister", "status", "tasks", "list", "config"]:
         assert cmd in text

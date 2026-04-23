@@ -60,31 +60,30 @@ class TasksCommand(Command):
         return name
 
     @staticmethod
-    def _parse_bullet_line(line_text: str) -> List[Tuple[Optional[str], str]]:
+    def _parse_bullet_line(line_text: str) -> List[Tuple[str, str]]:
         # Returns a list because one bullet with multiple @mentions expands to
         # one task per assignee, all with the same text.
         line = line_text.strip()
         if not line:
             return []
 
-        if line.startswith("*") or line.startswith("-"):
-            body = line.lstrip("*-").strip()
+        # Strip optional bullet prefix: *, -, or • (Slack's rich-text bullet character)
+        if line[0] in ("*", "-", "•"):
+            body = line[1:].strip()
         else:
             body = line
 
         mentions = MENTION_PATTERN.findall(body)
+        if not mentions:
+            # Lines without @mention are silently ignored — they're context or free text,
+            # not tasks to assign.
+            return []
+
         task_text = MENTION_PATTERN.sub("", body).strip()
         if not task_text:
             return []
 
-        result: List[Tuple[Optional[str], str]] = []
-        if mentions:
-            for uid in mentions:
-                result.append((uid, task_text))
-        else:
-            # No @mention: create an unassigned task so the text isn't silently dropped
-            result.append((None, task_text))
-        return result
+        return [(uid, task_text) for uid in mentions]
 
     def handle(
         self,
@@ -92,22 +91,13 @@ class TasksCommand(Command):
         channel: str,
         user: str,
         ts: str,
+        thread_ts: Optional[str] = None,
         text_lines: List[str],
     ) -> None:
         self.log.info("TasksCommand.handle lines=%r", text_lines)
 
-        refresh_token = get_refresh_token(user)
-        if not refresh_token:
-            self.slack.chat_postEphemeral(
-                channel=channel,
-                user=user,
-                text=(
-                    f"<@{user}> You are not registered yet.\n"
-                    "Type `@Hex register` to connect your Google Tasks account."
-                ),
-                thread_ts=ts,
-            )
-            return
+        # The SENDER does not need to be registered — it's the ASSIGNEE who needs a
+        # Google account. Registration is checked per-assignee in the task loop below.
 
         if not text_lines:
             return
@@ -120,9 +110,10 @@ class TasksCommand(Command):
         # Each parsed task: (assignee_id or None, task_text)
         parsed_tasks: List[Tuple[Optional[str], str]] = []
 
-        # Is there any bullet after the command ?
+        # A line is a task line if it has a bullet prefix (*, -, •) OR contains a @mention.
+        # Slack sends its rich-text bullets as • (U+2022), not *.
         has_bullets = any(
-            line.strip().startswith(("*", "-"))
+            line.strip().startswith(("*", "-", "•")) or bool(MENTION_PATTERN.search(line))
             for line in bullets
         )
 
@@ -151,7 +142,7 @@ class TasksCommand(Command):
             self.slack.chat_postMessage(
                 channel=channel,
                 text=usage,
-                thread_ts=ts,
+                thread_ts=thread_ts or ts,
             )
             return
 
@@ -168,24 +159,22 @@ class TasksCommand(Command):
             self.slack.chat_postMessage(
                 channel=channel,
                 text=msg,
-                thread_ts=ts,
+                thread_ts=thread_ts or ts,
             )
             return
 
         # One Google tasklist per Slack channel, created on demand.
-        # If channel resolution fails we leave tasklist_id=None, which makes
+        # If channel resolution fails we leave channel_name=None, which makes
         # create_task fall back to "@default" (the user's default Google tasklist).
-        tasklist_id: Optional[str] = None
+        channel_name: Optional[str] = None
         try:
             info = self.slack.conversations_info(channel=channel)
             ch = info.get("channel", {})
             channel_name = ch.get("name") or ch.get("id") or "Hex"
-            tasklist_id = get_or_create_tasklist(channel_name, refresh_token=refresh_token)
         except Exception as exc:
             self.log.exception("Failed to get channel name, using default list: %s", exc)
-            tasklist_id = None
 
-        # Slack permalink Slack to be added in the notes (optional if failure)
+        # Slack permalink to be added in the notes (optional if failure)
         permalink = None
         try:
             resp = self.slack.chat_getPermalink(channel=channel, message_ts=ts)
@@ -204,9 +193,32 @@ class TasksCommand(Command):
         failures: List[str] = []
 
         for assignee_id, task_text in parsed_tasks:
+            # Each assignee has their own Google account — look up their token.
+            # assignee_id is always set: _parse_bullet_line never returns (None, text).
+            refresh_token = get_refresh_token(assignee_id)
+            assignee_mention = f"<@{assignee_id}>"
+
+            if not refresh_token:
+                target = f"<@{assignee_id}>" if assignee_id else sender_mention
+                self.log.warning("TasksCommand: %s not registered, skipping %r", target, task_text)
+                failures.append(
+                    f'✗ {target} is not registered — they need to type "@Hex register" '
+                    "to connect their Google Tasks account."
+                )
+                continue
+
+            # Tasklist lookup uses the assignee's token (their own Google account).
+            tasklist_id: Optional[str] = None
+            if channel_name:
+                try:
+                    tasklist_id = get_or_create_tasklist(channel_name, refresh_token=refresh_token)
+                except Exception as exc:
+                    self.log.exception("Failed to get tasklist for %s: %s", assignee_id or user, exc)
+
+            # Default title set before the try so the except handler can log it even
+            # if _get_user_display_name raises before google_title is reassigned.
             google_title = f"[unassigned] {task_text}"
             notes = f"From Slack: {permalink}" if permalink else ""
-            assignee_mention = f"<@{assignee_id}>" if assignee_id else "unassigned"
 
             try:
                 # Google title uses a readable name, not a raw Slack ID
@@ -239,7 +251,7 @@ class TasksCommand(Command):
             self.slack.chat_postMessage(
                 channel=channel,
                 text="\n".join(reply_lines),
-                thread_ts=ts,
+                thread_ts=thread_ts or ts,
             )
 
         # Remove the "eyes" reaction now that the summary has been posted

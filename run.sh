@@ -3,6 +3,11 @@ set -e
 
 cd "$(dirname "$0")"
 
+MODE="local"
+if [[ "${1:-}" == "--docker" ]]; then
+  MODE="docker"
+fi
+
 # Start ngrok in background and capture its PID
 ngrok http 8080 --log=stdout > /tmp/hex-ngrok.log 2>&1 &
 NGROK_PID=$!
@@ -27,5 +32,13 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 echo ""
-echo "Starting Flask..."
-.venv/bin/python -m hex_bot.app
+if [[ "$MODE" == "docker" ]]; then
+  echo "Building Docker image..."
+  docker build -t hex-bot:local .
+  echo "Starting bot (Docker)..."
+  # --env-file .env injects secrets; --rm removes the container on exit
+  docker run --rm --env-file .env -p 8080:8080 hex-bot:local
+else
+  echo "Starting bot (local venv)..."
+  .venv/bin/python -m hex_bot.app
+fi

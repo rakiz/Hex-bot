@@ -139,13 +139,11 @@ La connexion MongoDB est configurée via `MONGODB_URI`.
 
 ### Phase 4 — Déploiement Kanopy
 
-**À investiguer avec l'équipe infra :**
-- Cluster MongoDB disponible (Atlas ? cluster interne ?)
-- Gestion des secrets (Kubernetes Secrets, Vault, autre ?)
-- Domaine HTTPS public pour les callbacks OAuth
+> **Note :** ce déploiement sera réalisé dans un clone interne MongoDB de ce dépôt
+> (infrastructure Kanopy est MongoDB-only). Ce dépôt public reste la référence du code source.
 
-**Checklist technique :**
-- `Dockerfile` (base Python 3.11-slim, Gunicorn, pas de serveur de dev Flask)
+**Checklist technique (déjà prête dans ce dépôt) :**
+- `Dockerfile` ✅ (python:3.13-slim + Gunicorn, `exec` pour SIGTERM propre)
 - Variables d'environnement requises :
   ```
   SLACK_BOT_TOKEN
@@ -156,8 +154,9 @@ La connexion MongoDB est configurée via `MONGODB_URI`.
   FERNET_KEY              (généré une fois : python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
   MONGODB_URI             (ex: mongodb+srv://user:pass@cluster.mongodb.net/hex)
   PUBLIC_BASE_URL         (ex: https://hex-bot.mongodb.com, pour construire l'URL de callback OAuth)
+  WEB_CONCURRENCY         (optionnel, nombre de workers Gunicorn, défaut 4)
   ```
-- Health check sur `/healthz`
+- Health check sur `/healthz` ✅
 
 ---
 
