@@ -58,6 +58,9 @@ def _dispatch(event: dict) -> None:
     channel = event.get("channel")
     user = event.get("user")
     ts = event.get("ts")
+    # thread_ts is set by Slack only when the command was sent inside an existing thread.
+    # Passing it down lets commands post ephemerals in the same context as the command.
+    thread_ts = event.get("thread_ts")
     text = event.get("text", "")
 
     if not channel or not user or not ts:
@@ -75,12 +78,12 @@ def _dispatch(event: dict) -> None:
         return
 
     if not subcmd:
-        _send_help_for_root(channel, user, ts)
+        _send_help_for_root(channel, user, ts, thread_ts)
         return
 
     cmd_cls = get_command(subcmd)
     if not cmd_cls:
-        _send_unknown_command_help(channel, user, ts, subcmd)
+        _send_unknown_command_help(channel, user, ts, subcmd, thread_ts)
         return
 
     # Pass from the command line itself (not cmd_line_idx+1): commands need
@@ -88,9 +91,9 @@ def _dispatch(event: dict) -> None:
     # same line as "@Hex tasks").
     relevant_lines = lines[cmd_line_idx:]
     cmd = cmd_cls(slack_client=slack, logger=log)
-    cmd.handle(channel=channel, user=user, ts=ts, text_lines=relevant_lines)
+    cmd.handle(channel=channel, user=user, ts=ts, thread_ts=thread_ts, text_lines=relevant_lines)
 
-def _send_help_for_root(channel: str, user: str, ts: str) -> None:
+def _send_help_for_root(channel: str, user: str, ts: str, thread_ts: Optional[str]) -> None:
     slack.chat_postEphemeral(
         channel=channel,
         user=user,
@@ -109,10 +112,10 @@ def _send_help_for_root(channel: str, user: str, ts: str) -> None:
             "*Inline form* (single task):\n"
             "`@Hex tasks @alice @bob do that`"
         ),
-        thread_ts=ts,
+        thread_ts=thread_ts,
     )
 
-def _send_unknown_command_help(channel: str, user: str, ts: str, subcmd: str) -> None:
+def _send_unknown_command_help(channel: str, user: str, ts: str, subcmd: str, thread_ts: Optional[str]) -> None:
     slack.chat_postEphemeral(
         channel=channel,
         user=user,
@@ -120,5 +123,5 @@ def _send_unknown_command_help(channel: str, user: str, ts: str, subcmd: str) ->
             f"Unknown command: `{subcmd}`.\n"
             "Available commands: `register`, `unregister`, `status`, `tasks`, `list`, `config`."
         ),
-        thread_ts=ts,
+        thread_ts=thread_ts,
     )

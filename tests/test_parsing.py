@@ -16,9 +16,10 @@ class TestParseBulletLine:
         result = TasksCommand._parse_bullet_line("* <@UALICE> <@UBOB> fix the bug")
         assert result == [("UALICE", "fix the bug"), ("UBOB", "fix the bug")]
 
-    def test_bullet_without_mention_is_unassigned(self):
+    def test_bullet_without_mention_is_ignored(self):
+        # Lines without @mention are silently skipped — no assignee, no task.
         result = TasksCommand._parse_bullet_line("* fix the bug")
-        assert result == [(None, "fix the bug")]
+        assert result == []
 
     def test_dash_bullet(self):
         result = TasksCommand._parse_bullet_line("- <@UALICE> fix the bug")

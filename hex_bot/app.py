@@ -55,7 +55,7 @@ def create_app() -> Flask:
         try:
             slack.chat_postMessage(
                 channel=slack_user_id,  # passing a user_id opens a DM
-                text="✅ Your Google Tasks account is now connected to Hex! You can now use `@Hex tasks`.",
+                text="✅ Your Google Tasks account is now connected to Hex! You can now use @Hex tasks.",
             )
         except Exception as exc:
             log.warning("Failed to send DM after OAuth: %s", exc)
@@ -82,6 +82,7 @@ def create_app() -> Flask:
 
             event = payload.get("event", {})
             event_type = event.get("type")
+            log.debug("event_callback received: type=%s event_id=%s", event_type, event_id)
 
             if event_type == "app_mention":
                 # Slack expects a 200 within 3 seconds or it retries the event,
@@ -92,6 +93,8 @@ def create_app() -> Flask:
                     args=(event,),
                     daemon=True,  # dies with the main process, no cleanup needed
                 ).start()
+            else:
+                log.warning("Unhandled event type: %s (check Slack app event subscriptions)", event_type)
 
         return "", 200
 

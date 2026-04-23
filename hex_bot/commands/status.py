@@ -9,7 +9,7 @@ _DEFAULT_TASKLIST_LABEL = "channel name (default)"
 class StatusCommand(Command):
     name = "status"
 
-    def handle(self, *, channel, user, ts, text_lines):
+    def handle(self, *, channel, user, ts, thread_ts=None, text_lines):
         record = get_user(user)
         if not record:
             self.slack.chat_postEphemeral(
@@ -17,9 +17,9 @@ class StatusCommand(Command):
                 user=user,
                 text=(
                     f"<@{user}> You are not registered.\n"
-                    "Type `@Hex register` to connect your Google Tasks account."
+                    'Type "@Hex register" to connect your Google Tasks account.'
                 ),
-                thread_ts=ts,
+                thread_ts=thread_ts,
             )
             return
 
@@ -28,5 +28,5 @@ class StatusCommand(Command):
             channel=channel,
             user=user,
             text=f"<@{user}> ✅ Registered. Tasklist: *{tasklist}*",
-            thread_ts=ts,
+            thread_ts=thread_ts,
         )

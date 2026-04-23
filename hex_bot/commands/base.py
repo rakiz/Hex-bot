@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Dict, Type, List
+from typing import Dict, Type, List, Optional
 
 class Command(ABC):
     """
@@ -22,11 +22,16 @@ class Command(ABC):
         channel: str,
         user: str,
         ts: str,
+        thread_ts: Optional[str] = None,
         text_lines: List[str],
     ) -> None:
         """
         Execute the command.
 
+        ts:        timestamp of the triggering message (used for reactions, permalinks).
+        thread_ts: parent thread timestamp if the command was sent inside a thread,
+                   None if it was a top-level message. Passed to chat_postEphemeral so
+                   bot responses appear in the same context as the original command.
         text_lines: all lines of the Slack message (including the first one).
         """
         ...
