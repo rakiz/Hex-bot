@@ -3,5 +3,22 @@ set -e
 
 cd "$(dirname "$0")/.."
 
+# Block Kanopy deployment files from being pushed outside the 10gen remote.
+REMOTE_URL="$2"
+KANOPY_DIR="kanopy"
+
+if ! echo "$REMOTE_URL" | grep -qi "10gen"; then
+    if git ls-files --error-unmatch "$KANOPY_DIR/" > /dev/null 2>&1; then
+        echo ""
+        echo "  ✗ Push blocked: '$KANOPY_DIR/' contains deployment files that must"
+        echo "    not leave the 10gen remote."
+        echo ""
+        echo "  Push app code only:  git push origin <branch>"
+        echo "  Push everything:     git push 10gen <branch>"
+        echo ""
+        exit 1
+    fi
+fi
+
 echo "Running tests before push..."
 ./test.sh
