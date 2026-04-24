@@ -64,7 +64,7 @@ hex-bot/
       register.py        # "@Hex register" command (starts Google OAuth flow)
       unregister.py      # "@Hex unregister" command
       status.py          # "@Hex status" command
-      tasklist.py        # "@Hex tasklist [name] [--all] [--limit N] [--skip N]" command
+      tasklist.py        # "@Hex tasklist [name] [all] [limit N] [skip N]" command
       config.py          # "@Hex config tasklist <name|default>" command
       help.py            # "@Hex help [command]" command
   tests/
@@ -79,7 +79,7 @@ hex-bot/
     test_app.py          # Flask endpoint tests (URL verification, OAuth callback)
     test_dispatcher.py   # Command routing tests
     test_commands.py     # register / unregister / status command tests
-    test_commands_tasks.py  # tasks command tests (parsing, per-assignee logic)
+    test_commands_tasks.py  # tasks command tests (parsing, per-assignee logic, due dates, me)
     test_commands_list_config.py  # tasklist and config command tests
     test_commands_help.py         # help command tests
   scripts/
@@ -101,8 +101,8 @@ Key modules:
 - **`db.py`** – MongoDB persistence: user CRUD with Fernet-encrypted refresh tokens, event dedup via TTL collection (10 min window).
 - **`slack_client.py`** – `WebClient`, `verify_slack_signature`, `get_bot_user_id`.
 - **`dispatcher.py`** – finds the `@Hex <command>` line, routes to the matching command.
-- **`commands/tasks.py`** – parses bullets/inline, resolves names, calls Google Tasks per assignee, posts per-task summary.
-- **`commands/tasklist.py`** – lists open tasks from a Google Tasks list (by channel name, configured default, or explicit name); supports `--all`, `--limit N`, `--skip N`.
+- **`commands/tasks.py`** – parses bullets/inline/`me` self-assignment, resolves names, handles due dates, calls Google Tasks per assignee, posts per-task summary.
+- **`commands/tasklist.py`** – lists open tasks from a Google Tasks list (by channel name, configured default, or explicit name); supports `all`, `limit N`, `skip N`.
 - **`commands/config.py`** – sets or resets the user's default tasklist name.
 - **`commands/help.py`** – lists all registered commands (`@Hex help`) or shows usage and examples for one (`@Hex help <cmd>`). Documentation is pulled from each command's own class attributes — no centralised help strings.
 - **`google_tasks.py`** – OAuth2 refresh-token client, tasklist cache (per token), `create_task`, `list_tasks`.
