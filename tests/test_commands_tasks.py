@@ -110,9 +110,17 @@ def test_no_task_content_sends_usage():
     assert "@Hex tasks" in slack.chat_postMessage.call_args[1]["text"]
 
 
-def test_unparseable_bullets_sends_error():
-    # Bullets with no text after stripping mentions → nothing to create
+def test_mention_only_no_text_reports_failure():
+    # * <@U2> with no task text → explicit failure, not silent drop
     slack = _run(["<@BOT> tasks", "* <@U2>"])
+    text = slack.chat_postMessage.call_args[1]["text"]
+    assert "✗" in text
+    assert "no task text" in text
+
+
+def test_all_bullets_without_mention_sends_unparseable_error():
+    # Lines with no @mention at all → parsed_tasks stays empty
+    slack = _run(["<@BOT> tasks", "* fix this", "* fix that"])
     slack.chat_postMessage.assert_called_once()
     assert "couldn't parse" in slack.chat_postMessage.call_args[1]["text"]
 
@@ -176,6 +184,188 @@ def test_partial_failure_reports_both():
     text = slack.chat_postMessage.call_args[1]["text"]
     assert "✓" in text
     assert "✗" in text
+
+
+# ---------------------------------------------------------------------------
+# Due dates
+# ---------------------------------------------------------------------------
+
+def test_due_date_passed_to_create_task():
+    from unittest.mock import call
+    with patch("hex_bot.commands.tasks.get_refresh_token", return_value="tok"), \
+         patch("hex_bot.commands.tasks.get_or_create_tasklist", return_value="L1"), \
+         patch("hex_bot.commands.tasks.create_task", return_value={"id": "T1"}) as mock_create:
+        from hex_bot.commands.tasks import TasksCommand
+        slack = _make_slack()
+        TasksCommand(slack_client=slack, logger=log).handle(
+            channel=CHANNEL, user=USER, ts=TS,
+            text_lines=["<@BOT> tasks", "* <@U2> fix bug by 2026-05-01"],
+        )
+    _, kwargs = mock_create.call_args
+    assert kwargs["due"] == "2026-05-01T00:00:00.000Z"
+
+
+def test_due_date_shown_in_success_reply():
+    slack = _run(["<@BOT> tasks", "* <@U2> fix bug by 2026-05-01"])
+    text = slack.chat_postMessage.call_args[1]["text"]
+    assert "2026-05-01" in text
+
+
+def test_no_due_date_passes_none_to_create_task():
+    with patch("hex_bot.commands.tasks.get_refresh_token", return_value="tok"), \
+         patch("hex_bot.commands.tasks.get_or_create_tasklist", return_value="L1"), \
+         patch("hex_bot.commands.tasks.create_task", return_value={"id": "T1"}) as mock_create:
+        from hex_bot.commands.tasks import TasksCommand
+        slack = _make_slack()
+        TasksCommand(slack_client=slack, logger=log).handle(
+            channel=CHANNEL, user=USER, ts=TS,
+            text_lines=["<@BOT> tasks", "* <@U2> fix bug"],
+        )
+    _, kwargs = mock_create.call_args
+    assert kwargs["due"] is None
+
+
+# ---------------------------------------------------------------------------
+# me: self-assignment
+# ---------------------------------------------------------------------------
+
+def test_me_inline_assigns_to_sender():
+    slack = _run([f"<@BOT> tasks me fix the login bug"], tokens={USER: "tok"})
+    text = slack.chat_postMessage.call_args[1]["text"]
+    assert "✓" in text
+    assert f"<@{USER}>" in text
+
+
+def test_me_with_unquoted_list_override_skips_conversations_info():
+    slack = _run([f"<@BOT> tasks me:my-project fix the login bug"], tokens={USER: "tok"})
+    slack.conversations_info.assert_not_called()
+    with patch("hex_bot.commands.tasks.get_refresh_token", return_value="tok"), \
+         patch("hex_bot.commands.tasks.get_or_create_tasklist", return_value="L1") as mock_gtl, \
+         patch("hex_bot.commands.tasks.create_task", return_value={"id": "T1"}):
+        from hex_bot.commands.tasks import TasksCommand
+        s = _make_slack()
+        TasksCommand(slack_client=s, logger=log).handle(
+            channel=CHANNEL, user=USER, ts=TS,
+            text_lines=[f"<@BOT> tasks me:my-project fix the login bug"],
+        )
+    mock_gtl.assert_called_once_with("my-project", refresh_token="tok")
+
+
+def test_me_with_quoted_list_override():
+    with patch("hex_bot.commands.tasks.get_refresh_token", return_value="tok"), \
+         patch("hex_bot.commands.tasks.get_or_create_tasklist", return_value="L1") as mock_gtl, \
+         patch("hex_bot.commands.tasks.create_task", return_value={"id": "T1"}):
+        from hex_bot.commands.tasks import TasksCommand
+        s = _make_slack()
+        TasksCommand(slack_client=s, logger=log).handle(
+            channel=CHANNEL, user=USER, ts=TS,
+            text_lines=[f'<@BOT> tasks me:"my project 2026" fix bug'],
+        )
+    mock_gtl.assert_called_once_with("my project 2026", refresh_token="tok")
+
+
+# ---------------------------------------------------------------------------
+# _parse_me_prefix — unit tests for the parser
+# ---------------------------------------------------------------------------
+
+def test_parse_me_prefix_bare_me():
+    from hex_bot.commands.tasks import _parse_me_prefix
+    has_me, list_override, remaining = _parse_me_prefix("<@BOT> tasks me")
+    assert has_me is True
+    assert list_override is None
+    assert remaining == ""
+
+
+def test_parse_me_prefix_me_with_text():
+    from hex_bot.commands.tasks import _parse_me_prefix
+    has_me, list_override, remaining = _parse_me_prefix("<@BOT> tasks me fix the bug")
+    assert has_me is True
+    assert list_override is None
+    assert remaining == "fix the bug"
+
+
+def test_parse_me_prefix_unquoted_list():
+    from hex_bot.commands.tasks import _parse_me_prefix
+    has_me, list_override, remaining = _parse_me_prefix("<@BOT> tasks me:my-project fix the bug")
+    assert has_me is True
+    assert list_override == "my-project"
+    assert remaining == "fix the bug"
+
+
+def test_parse_me_prefix_quoted_list():
+    from hex_bot.commands.tasks import _parse_me_prefix
+    has_me, list_override, remaining = _parse_me_prefix('<@BOT> tasks me:"my project 2026" fix the bug')
+    assert has_me is True
+    assert list_override == "my project 2026"
+    assert remaining == "fix the bug"
+
+
+def test_parse_me_prefix_no_me():
+    from hex_bot.commands.tasks import _parse_me_prefix
+    has_me, list_override, remaining = _parse_me_prefix("<@BOT> tasks @U2 fix the bug")
+    assert has_me is False
+
+
+def test_parse_me_prefix_word_starting_with_me_is_not_matched():
+    from hex_bot.commands.tasks import _parse_me_prefix
+    has_me, _, _ = _parse_me_prefix("<@BOT> tasks meaningful work")
+    assert has_me is False
+
+
+# ---------------------------------------------------------------------------
+# me: self-assignment — edge cases
+# ---------------------------------------------------------------------------
+
+def test_me_stray_mentions_in_text_are_ignored():
+    # me is not compatible with other assignees — stray @mentions in the text are stripped
+    slack = _run([f"<@BOT> tasks me fix @U2 the bug"], tokens={USER: "tok"})
+    text = slack.chat_postMessage.call_args[1]["text"]
+    assert "Created 1" in text
+    assert f"<@{USER}>" in text
+
+
+def test_me_without_task_text_sends_usage():
+    slack = _run([f"<@BOT> tasks me"])
+    slack.chat_postMessage.assert_called_once()
+    assert "@Hex tasks" in slack.chat_postMessage.call_args[1]["text"]
+
+
+def test_me_with_list_override_but_no_task_text_sends_usage():
+    slack = _run([f"<@BOT> tasks me:my-project"])
+    slack.chat_postMessage.assert_called_once()
+    assert "@Hex tasks" in slack.chat_postMessage.call_args[1]["text"]
+
+
+def test_me_due_date_passed_to_create_task():
+    with patch("hex_bot.commands.tasks.get_refresh_token", return_value="tok"), \
+         patch("hex_bot.commands.tasks.get_or_create_tasklist", return_value="L1"), \
+         patch("hex_bot.commands.tasks.create_task", return_value={"id": "T1"}) as mock_create:
+        from hex_bot.commands.tasks import TasksCommand
+        s = _make_slack()
+        TasksCommand(slack_client=s, logger=log).handle(
+            channel=CHANNEL, user=USER, ts=TS,
+            text_lines=[f"<@BOT> tasks me fix bug by 2026-05-01"],
+        )
+    _, kwargs = mock_create.call_args
+    assert kwargs["due"] == "2026-05-01T00:00:00.000Z"
+
+
+def test_me_with_bullets_present_ignores_me_processes_bullets():
+    # me is inline-only; if bullets are present, me on the command line is irrelevant
+    slack = _run([
+        f"<@BOT> tasks me",
+        "* <@U2> review the PR",
+    ], tokens={"U2": "tok"})
+    text = slack.chat_postMessage.call_args[1]["text"]
+    assert "Created 1" in text
+    assert "<@U2>" in text
+
+
+def test_me_sender_not_registered_reports_failure():
+    slack = _run([f"<@BOT> tasks me fix the bug"], tokens={USER: None})
+    text = slack.chat_postMessage.call_args[1]["text"]
+    assert "✗" in text
+    assert "register" in text.lower()
 
 
 # ---------------------------------------------------------------------------

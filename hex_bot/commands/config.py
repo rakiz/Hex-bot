@@ -10,6 +10,13 @@ _RESET_KEYWORD = "default"
 @register_command
 class ConfigCommand(Command):
     name = "config"
+    description = "Pin a tasklist name for all channels, or revert to using the current channel name."
+    usage = "@Hex config tasklist <name|default>"
+    notes = "<name> — any tasklist name, applied across all channels\ndefault — revert to using the current channel name"
+    examples = [
+        "@Hex config tasklist my-project",
+        "@Hex config tasklist default",
+    ]
 
     def handle(self, *, channel, user, ts, thread_ts=None, text_lines):
         # Expected: "@Hex config tasklist <name>" or "@Hex config tasklist default"

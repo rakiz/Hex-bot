@@ -78,12 +78,12 @@ def _dispatch(event: dict) -> None:
         return
 
     if not subcmd:
-        _send_help_for_root(channel, user, ts, thread_ts)
+        _invoke_help(bot_user_id, channel, user, ts, thread_ts)
         return
 
     cmd_cls = get_command(subcmd)
     if not cmd_cls:
-        _send_unknown_command_help(channel, user, ts, subcmd, thread_ts)
+        _invoke_help(bot_user_id, channel, user, ts, thread_ts, subcmd)
         return
 
     # Pass from the command line itself (not cmd_line_idx+1): commands need
@@ -93,35 +93,29 @@ def _dispatch(event: dict) -> None:
     cmd = cmd_cls(slack_client=slack, logger=log)
     cmd.handle(channel=channel, user=user, ts=ts, thread_ts=thread_ts, text_lines=relevant_lines)
 
-def _send_help_for_root(channel: str, user: str, ts: str, thread_ts: Optional[str]) -> None:
-    slack.chat_postEphemeral(
-        channel=channel,
-        user=user,
-        text=(
-            "Hi, I am Hex. Here are the available commands:\n\n"
-            "- `@Hex register` — connect your Google Tasks account.\n"
-            "- `@Hex unregister` — disconnect your Google Tasks account.\n"
-            "- `@Hex status` — check your registration status.\n"
-            "- `@Hex tasks` — create Google Tasks from a mention.\n"
-            "- `@Hex list [name]` — list open tasks (current channel, or named tasklist).\n"
-            "- `@Hex config tasklist <name|default>` — set or reset your default tasklist.\n\n"
-            "*Bullet form* (one task per line):\n"
-            "`@Hex tasks`\n"
-            "`* @alice do this`\n"
-            "`* @alice @bob do that` ← creates one task per person\n\n"
-            "*Inline form* (single task):\n"
-            "`@Hex tasks @alice @bob do that`"
-        ),
-        thread_ts=thread_ts,
-    )
+def _invoke_help(
+    bot_user_id: str,
+    channel: str,
+    user: str,
+    ts: str,
+    thread_ts: Optional[str],
+    target: Optional[str] = None,
+) -> None:
+    """
+    Delegate to HelpCommand by synthesising a text_lines list.
 
-def _send_unknown_command_help(channel: str, user: str, ts: str, subcmd: str, thread_ts: Optional[str]) -> None:
-    slack.chat_postEphemeral(
+    Used for two cases:
+      - bare "@Hex" (no subcommand) → shows the command summary
+      - "@Hex <unknown>" → HelpCommand recognises the unknown name and shows an error
+    """
+    help_cls = get_command("help")
+    if help_cls is None:
+        return  # shouldn't happen — help is always registered
+    synthetic_line = f"<@{bot_user_id}> help" + (f" {target}" if target else "")
+    help_cls(slack_client=slack, logger=log).handle(
         channel=channel,
         user=user,
-        text=(
-            f"Unknown command: `{subcmd}`.\n"
-            "Available commands: `register`, `unregister`, `status`, `tasks`, `list`, `config`."
-        ),
+        ts=ts,
         thread_ts=thread_ts,
+        text_lines=[synthetic_line],
     )

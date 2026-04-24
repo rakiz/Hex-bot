@@ -6,10 +6,21 @@ from typing import Dict, Type, List, Optional
 class Command(ABC):
     """
     Base interface for all Hex subcommands, e.g. "tasks", "help", etc.
+
+    Subclasses set the class-level documentation attributes so that HelpCommand
+    can build its output without any centralised knowledge of individual commands.
     """
 
     # Subcommand name as invoked from Slack, e.g. "@Hex tasks"
-    name: str
+    name: str = ""
+    # One-line description shown in "@Hex help" summary.
+    description: str = ""
+    # Short usage signature shown in "@Hex help <cmd>".
+    usage: str = ""
+    # Optional plain-text clarification shown below the usage line.
+    notes: str = ""
+    # Illustrative usage lines shown in "@Hex help <cmd>".
+    examples: List[str] = []
 
     def __init__(self, *, slack_client, logger):
         self.slack = slack_client
@@ -50,3 +61,8 @@ def register_command(cls: Type[Command]) -> Type[Command]:
 
 def get_command(name: str) -> Type[Command] | None:
     return _COMMANDS.get(name)
+
+
+def get_all_commands() -> Dict[str, Type[Command]]:
+    """Return a snapshot of the full command registry (name → class)."""
+    return dict(_COMMANDS)

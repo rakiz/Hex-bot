@@ -63,7 +63,7 @@ La connexion MongoDB est configurée via `MONGODB_URI`.
 | `@Hex register` | Envoie un lien OAuth Google en message éphémère |
 | `@Hex unregister` | Supprime les credentials de l'utilisateur |
 | `@Hex status` | Indique si l'utilisateur est enregistré, et quelle tasklist est configurée |
-| `@Hex list` | Liste les tâches non terminées de la tasklist de l'utilisateur |
+| `@Hex tasklist` | Liste les tâches non terminées de la tasklist de l'utilisateur |
 | `@Hex config tasklist <nom>` | Définit un nom de tasklist personnalisé (pour tous les channels) |
 | `@Hex config tasklist default` | Remet le comportement par défaut (nom du channel) |
 
@@ -125,7 +125,7 @@ La connexion MongoDB est configurée via `MONGODB_URI`.
 
 **Objectif :** permettre aux utilisateurs de consulter leurs tâches et de configurer leur tasklist.
 
-**`@Hex list`**
+**`@Hex tasklist`**
 - Récupère les tâches non terminées (`status != completed`) de la tasklist configurée
 - Affiche en éphémère dans le thread (maximum 20 tâches pour éviter le spam)
 - Si l'utilisateur n'est pas enregistré : renvoyer vers `@Hex register`

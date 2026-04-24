@@ -20,6 +20,13 @@ _tasklist_cache: Dict[Tuple[str, str], str] = {}  # (refresh_token, channel_name
 
 
 def _get_service(refresh_token: str):
+    """
+    Return (and cache) a Google Tasks API service object for the given refresh token.
+
+    The first call for a token builds a Credentials object and calls googleapiclient.discovery.build.
+    Subsequent calls return the cached service directly, avoiding repeated discovery requests.
+    The cache is keyed by refresh token, so each registered user gets their own session.
+    """
     if refresh_token not in _services:
         log.debug("Building Google Tasks service (token=...%s)", refresh_token[-4:])
         creds = Credentials(
@@ -80,16 +87,52 @@ def find_tasklist(title: str, *, refresh_token: str) -> Optional[str]:
     return None
 
 
-def list_tasks(tasklist_id: str, *, refresh_token: str) -> list:
-    """Returns up to _MAX_LIST_TASKS non-completed tasks from the given tasklist."""
+def list_tasks(
+    tasklist_id: str,
+    *,
+    refresh_token: str,
+    limit: Optional[int] = _MAX_LIST_TASKS,
+    skip: int = 0,
+) -> list:
+    """
+    Returns non-completed tasks from the given tasklist.
+    limit=None fetches all tasks; otherwise stops after limit tasks (post-skip).
+    skip discards the first N results before applying limit.
+    """
     try:
         service = _get_service(refresh_token)
-        result = service.tasks().list(
-            tasklist=tasklist_id,
-            showCompleted=False,  # Google Tasks API defaults to True, we only want open tasks
-            maxResults=_MAX_LIST_TASKS,
-        ).execute()
-        return result.get("items", [])
+        tasks: list = []
+        page_token = None
+
+        while True:
+            # Request as many as needed to cover skip + limit in one or few pages.
+            if limit is not None:
+                still_needed = skip + limit - len(tasks)
+                if still_needed <= 0:
+                    break
+                page_size = min(still_needed, _PAGE_SIZE)
+            else:
+                page_size = _PAGE_SIZE
+
+            kwargs: dict = {
+                "tasklist": tasklist_id,
+                "showCompleted": False,  # only open tasks
+                "maxResults": page_size,
+            }
+            if page_token:
+                kwargs["pageToken"] = page_token
+
+            result = service.tasks().list(**kwargs).execute()
+            tasks.extend(result.get("items", []))
+
+            page_token = result.get("nextPageToken")
+            if not page_token:
+                break
+
+        tasks = tasks[skip:]
+        if limit is not None:
+            tasks = tasks[:limit]
+        return tasks
     except RefreshError:
         log.warning("RefreshError in list_tasks (token=...%s)", refresh_token[-4:])
         _reset_service(refresh_token)
@@ -97,6 +140,15 @@ def list_tasks(tasklist_id: str, *, refresh_token: str) -> list:
 
 
 def get_or_create_tasklist(title: str, *, refresh_token: str) -> str:
+    """
+    Return the ID of the tasklist with the given title, creating it if it doesn't exist.
+
+    Paginates through all tasklists (up to _PAGE_SIZE per page) to find a match.
+    If no match is found, creates a new tasklist and returns its ID.
+    Results are cached in _tasklist_cache so repeated calls for the same
+    (token, title) pair don't hit the API.
+    Raises RefreshError (re-raised after cache eviction) if the token is expired.
+    """
     cache_key = (refresh_token, title)
     if cache_key in _tasklist_cache:
         return _tasklist_cache[cache_key]
@@ -133,14 +185,26 @@ def create_task(
     title: str,
     notes: str = "",
     tasklist_id: Optional[str] = None,
+    due: Optional[str] = None,
     *,
     refresh_token: str,  # keyword-only: prevents accidental positional misuse with the other str params
 ) -> dict:
+    """
+    Create a task in the user's Google Tasks account and return the created task dict.
+
+    title:        visible task title (e.g. "[Alice] fix the login bug")
+    notes:        optional body text — used for the Slack message permalink
+    tasklist_id:  target list; falls back to "@default" (the user's primary list) if None
+    due:          optional RFC 3339 UTC midnight string, e.g. "2026-04-28T00:00:00.000Z"
+    refresh_token: the user's stored OAuth refresh token (required, keyword-only)
+    """
     try:
         service = _get_service(refresh_token)
-        body = {"title": title}
+        body: dict = {"title": title}
         if notes:
             body["notes"] = notes
+        if due:
+            body["due"] = due  # RFC 3339 UTC midnight, e.g. "2026-04-28T00:00:00.000Z"
         effective_tasklist = tasklist_id or _GOOGLE_DEFAULT_TASKLIST
         task = service.tasks().insert(
             tasklist=effective_tasklist,

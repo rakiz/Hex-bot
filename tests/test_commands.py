@@ -19,7 +19,8 @@ def _slack():
 def test_register_sends_ephemeral_with_url():
     from hex_bot.commands.register import RegisterCommand
     slack = _slack()
-    with patch("hex_bot.commands.register.generate_oauth_url", return_value="https://oauth.url") as mock_url:
+    with patch("hex_bot.commands.register.get_refresh_token", return_value=None), \
+         patch("hex_bot.commands.register.generate_oauth_url", return_value="https://oauth.url") as mock_url:
         RegisterCommand(slack_client=slack, logger=log).handle(
             channel=CHANNEL, user=USER, ts=TS, text_lines=[],
         )
@@ -28,6 +29,20 @@ def test_register_sends_ephemeral_with_url():
     text = slack.chat_postEphemeral.call_args[1]["text"]
     assert "https://oauth.url" in text
     assert "10 minutes" in text
+
+
+def test_register_already_registered_blocks_with_hint():
+    from hex_bot.commands.register import RegisterCommand
+    slack = _slack()
+    with patch("hex_bot.commands.register.get_refresh_token", return_value="existing_token"), \
+         patch("hex_bot.commands.register.generate_oauth_url") as mock_url:
+        RegisterCommand(slack_client=slack, logger=log).handle(
+            channel=CHANNEL, user=USER, ts=TS, text_lines=[],
+        )
+    mock_url.assert_not_called()
+    text = slack.chat_postEphemeral.call_args[1]["text"]
+    assert "already registered" in text.lower()
+    assert "unregister" in text.lower()
 
 
 # ---------------------------------------------------------------------------

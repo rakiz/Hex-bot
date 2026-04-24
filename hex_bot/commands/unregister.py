@@ -5,6 +5,10 @@ from ..db import get_user, delete_user
 @register_command
 class UnregisterCommand(Command):
     name = "unregister"
+    description = "Disconnect your Google Tasks account from Hex."
+    usage = "@Hex unregister"
+    notes = "Removes your stored credentials. Hex will no longer be able to create tasks in your Google account. Your existing tasks in Google Tasks are not affected."
+    examples = ["@Hex unregister"]
 
     def handle(self, *, channel, user, ts, thread_ts=None, text_lines):
         if not get_user(user):

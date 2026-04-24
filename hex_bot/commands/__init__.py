@@ -3,5 +3,6 @@ from .tasks import TasksCommand  # noqa: F401
 from .register import RegisterCommand  # noqa: F401
 from .unregister import UnregisterCommand  # noqa: F401
 from .status import StatusCommand  # noqa: F401
-from .list import ListCommand  # noqa: F401
+from .tasklist import TasklistCommand  # noqa: F401
 from .config import ConfigCommand  # noqa: F401
+from .help import HelpCommand  # noqa: F401

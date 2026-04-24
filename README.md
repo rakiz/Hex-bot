@@ -64,8 +64,9 @@ hex-bot/
       register.py        # "@Hex register" command (starts Google OAuth flow)
       unregister.py      # "@Hex unregister" command
       status.py          # "@Hex status" command
-      list.py            # "@Hex list [name]" command
+      tasklist.py        # "@Hex tasklist [name] [--all] [--limit N] [--skip N]" command
       config.py          # "@Hex config tasklist <name|default>" command
+      help.py            # "@Hex help [command]" command
   tests/
     __init__.py
     conftest.py          # pytest fixtures (MongoDB hex_test database)
@@ -79,7 +80,8 @@ hex-bot/
     test_dispatcher.py   # Command routing tests
     test_commands.py     # register / unregister / status command tests
     test_commands_tasks.py  # tasks command tests (parsing, per-assignee logic)
-    test_commands_list_config.py  # list and config command tests
+    test_commands_list_config.py  # tasklist and config command tests
+    test_commands_help.py         # help command tests
   scripts/
     get_refresh_token.py # One-off helper to obtain a Google refresh token
   Dockerfile             # Production image (python:3.13-slim + gunicorn)
@@ -100,8 +102,9 @@ Key modules:
 - **`slack_client.py`** – `WebClient`, `verify_slack_signature`, `get_bot_user_id`.
 - **`dispatcher.py`** – finds the `@Hex <command>` line, routes to the matching command.
 - **`commands/tasks.py`** – parses bullets/inline, resolves names, calls Google Tasks per assignee, posts per-task summary.
-- **`commands/list.py`** – lists open tasks from a Google Tasks list (by channel name, configured default, or explicit name).
+- **`commands/tasklist.py`** – lists open tasks from a Google Tasks list (by channel name, configured default, or explicit name); supports `--all`, `--limit N`, `--skip N`.
 - **`commands/config.py`** – sets or resets the user's default tasklist name.
+- **`commands/help.py`** – lists all registered commands (`@Hex help`) or shows usage and examples for one (`@Hex help <cmd>`). Documentation is pulled from each command's own class attributes — no centralised help strings.
 - **`google_tasks.py`** – OAuth2 refresh-token client, tasklist cache (per token), `create_task`, `list_tasks`.
 
 ---
@@ -282,8 +285,9 @@ In the target channel: `/invite @Hex`
 | `@Hex unregister` | Disconnect your Google Tasks account. |
 | `@Hex status` | Check whether you are registered and which tasklist is configured. |
 | `@Hex tasks` | Create Google Tasks from a bullet list or inline mention. |
-| `@Hex list [name]` | List open tasks (current channel, configured default, or named tasklist). |
+| `@Hex tasklist [name] [all] [limit N] [skip N]` | List open tasks (current channel, configured default, or named tasklist). |
 | `@Hex config tasklist <name\|default>` | Set or reset your default tasklist name. |
+| `@Hex help [command]` | List all commands, or show usage and examples for one. |
 
 **Expected behavior for `@Hex tasks`:**
 
@@ -300,10 +304,16 @@ In the target channel: `/invite @Hex`
 | `* @alice fix the bug` | 1 task for alice: _"fix the bug"_ |
 | `* @alice @bob fix the bug` | 2 tasks: one for alice, one for bob — same text |
 | `* fix @alice the bug` | 1 task for alice: _"fix the bug"_ (mention position doesn't matter) |
+| `* @alice fix the bug by Friday` | 1 task for alice with due date set to next Friday |
+| `* @alice fix the bug by 2026-04-28` | 1 task with explicit ISO due date |
+| `* @alice fix the bug #2026-04-28` | same — alternative due date syntax |
 | `* fix the bug` | ignored — no assignee, no task |
-| `* @alice` | ignored — no task text |
+| `* @alice` | ✗ reported — mention found but no task text |
 | `context line` | ignored — plain text without mention |
 | `@Hex tasks @alice do this` | inline form: 1 task for alice (no bullet needed) |
+| `@Hex tasks me fix the bug` | inline self-assignment: 1 task for the sender |
+| `@Hex tasks me:my-project fix the bug` | self-assignment in tasklist _"my-project"_ |
+| `@Hex tasks me:"my project" fix the bug` | same — quoted name allows spaces |
 
 Each line with `@mention` creates one task per mentioned user. All mentions are stripped from the task title regardless of where they appear in the line.
 
@@ -315,7 +325,7 @@ Please @alice review the auth code and @bob fix the login bug.
 Context line with no mention — this is ignored.
 ```
 
-Creates two tasks with the title `"Please  review the auth code and  fix the login bug."` (the mention text is stripped, leaving gaps). Use the bullet form for clean task titles:
+Creates two tasks with the title `"Please review the auth code and fix the login bug."` (mentions stripped, gaps normalized). Use the bullet form for clean task titles:
 
 ```
 @Hex tasks
@@ -333,10 +343,16 @@ Creates two tasks with the title `"Please  review the auth code and  fix the log
 
 Requires `MONGODB_URI` in the environment (or `.env`). Tests run against a `hex_test` database that is wiped after each test.
 
-The suite has 109 tests covering: command parsing, per-assignee task creation, Google Tasks client (with RefreshError handling), OAuth state management, Slack signature verification, MongoDB encryption/dedup, and all six commands.
+The suite has 152 tests covering: command parsing, per-assignee task creation, due dates, self-assignment (`me`), pagination, Google Tasks client (with RefreshError handling), OAuth state management, Slack signature verification, MongoDB encryption/dedup, and all seven commands (including help).
 
 ---
 
 ## 8. Roadmap
 
-See `PLAN.md` for the full evolution plan (MongoDB persistence ✅, per-user OAuth ✅, list/config commands ✅, Docker ✅).
+See `PLAN.md` for the full evolution plan (MongoDB persistence ✅, per-user OAuth ✅, list/config commands ✅, Docker ✅, help command ✅).
+
+### Potential improvements
+
+| Feature | Notes |
+|---|---|
+| **DM support** | Currently Hex only responds to `app_mention` events in channels. Supporting DMs requires: enabling the Messages Tab in App Home (Slack config), adding the `im:history` scope, subscribing to the `message.im` event, and updating the dispatcher to skip the `@Hex` prefix since users are already talking directly to the bot. |
