@@ -277,61 +277,7 @@ In the target channel: `/invite @Hex`
    * @you @someone another bullet
    ```
 
-**Available commands:**
-
-| Command | Description |
-|---|---|
-| `@Hex register` | Connect your Google Tasks account (sends an OAuth link). |
-| `@Hex unregister` | Disconnect your Google Tasks account. |
-| `@Hex status` | Check whether you are registered and which tasklist is configured. |
-| `@Hex tasks` | Create Google Tasks from a bullet list or inline mention. |
-| `@Hex tasklist [name] [all] [limit N] [skip N]` | List open tasks (current channel, configured default, or named tasklist). |
-| `@Hex config tasklist <name\|default>` | Set or reset your default tasklist name. |
-| `@Hex help [command]` | List all commands, or show usage and examples for one. |
-
-**Expected behavior for `@Hex tasks`:**
-
-- Hex adds 👀 to the message immediately.
-- After Google confirms, Hex removes 👀 and replies in thread with ✓/✗ per task.
-- A Google Tasks list named after the Slack channel is created in the **assignee's** Google account (if it doesn't exist).
-- The **sender** does not need to be registered — only the **assignees** do.
-- If an assignee is not registered, Hex reports `✗` for their task and continues with the rest.
-
-**Parsing rules — what counts as a task:**
-
-| Input line | Result |
-|---|---|
-| `* @alice fix the bug` | 1 task for alice: _"fix the bug"_ |
-| `* @alice @bob fix the bug` | 2 tasks: one for alice, one for bob — same text |
-| `* fix @alice the bug` | 1 task for alice: _"fix the bug"_ (mention position doesn't matter) |
-| `* @alice fix the bug by Friday` | 1 task for alice with due date set to next Friday |
-| `* @alice fix the bug by 2026-04-28` | 1 task with explicit ISO due date |
-| `* @alice fix the bug #2026-04-28` | same — alternative due date syntax |
-| `* fix the bug` | ignored — no assignee, no task |
-| `* @alice` | ✗ reported — mention found but no task text |
-| `context line` | ignored — plain text without mention |
-| `@Hex tasks @alice do this` | inline form: 1 task for alice (no bullet needed) |
-| `@Hex tasks me fix the bug` | inline self-assignment: 1 task for the sender |
-| `@Hex tasks me:my-project fix the bug` | self-assignment in tasklist _"my-project"_ |
-| `@Hex tasks me:"my project" fix the bug` | same — quoted name allows spaces |
-
-Each line with `@mention` creates one task per mentioned user. All mentions are stripped from the task title regardless of where they appear in the line.
-
-**⚠️ Free-text lines with mentions also create tasks.** Any line that contains an `@mention` — even without a bullet prefix — is treated as a task. The task title is the entire line with all mentions removed. For example:
-
-```
-@Hex tasks
-Please @alice review the auth code and @bob fix the login bug.
-Context line with no mention — this is ignored.
-```
-
-Creates two tasks with the title `"Please review the auth code and fix the login bug."` (mentions stripped, gaps normalized). Use the bullet form for clean task titles:
-
-```
-@Hex tasks
-* @alice review the auth code
-* @bob fix the login bug
-```
+For the full list of commands with usage and examples, type `@Hex help` in Slack, or `@Hex help <command>` for details on a specific command.
 
 ---
 
@@ -347,11 +293,7 @@ The suite has 152 tests covering: command parsing, per-assignee task creation, d
 
 ---
 
-## 8. Roadmap
-
-See `PLAN.md` for the full evolution plan (MongoDB persistence ✅, per-user OAuth ✅, list/config commands ✅, Docker ✅, help command ✅).
-
-### Potential improvements
+## 8. Potential improvements
 
 | Feature | Notes |
 |---|---|
