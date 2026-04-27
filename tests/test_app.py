@@ -14,12 +14,19 @@ TEST_SECRET = "test_signing_secret"
 
 @pytest.fixture
 def app():
-    return create_app()
+    with patch("hex_bot.app.scheduler.start"):
+        return create_app()
 
 
 @pytest.fixture
 def client(app):
     return app.test_client()
+
+
+def test_scheduler_started_on_create_app():
+    with patch("hex_bot.app.scheduler.start") as mock_start:
+        create_app()
+    mock_start.assert_called_once()
 
 
 def _signed_headers(body: str, secret: str = TEST_SECRET, timestamp: int = None) -> dict:

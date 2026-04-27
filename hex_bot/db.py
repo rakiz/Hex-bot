@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, List
 
 from cryptography.fernet import Fernet
 from pymongo import MongoClient, ASCENDING
@@ -103,3 +103,77 @@ def set_tasklist_name(slack_user_id: str, tasklist_name: Optional[str]) -> None:
 def delete_user(slack_user_id: str) -> None:
     """Removes all stored data for a user."""
     _get_db().users.delete_one({"_id": slack_user_id})
+
+
+# ---------------------------------------------------------------------------
+# Usage stats
+# ---------------------------------------------------------------------------
+
+def _week_key() -> str:
+    return datetime.now(tz=timezone.utc).strftime("%G-W%V")
+
+
+def record_tasks(
+    *,
+    sender_id: str,
+    sender_name: str,
+    successes: List[dict],   # [{"assignee_id": str, "assignee_name": str}, ...]
+    error_types: List[str],  # ["unregistered_assignee", "google_api_error", ...]
+) -> None:
+    if not successes and not error_types:
+        return
+
+    week = _week_key()
+    inc: dict = {}
+    set_: dict = {}
+
+    if successes:
+        inc["tasks_created"] = len(successes)
+        inc[f"senders.{sender_id}.count"] = len(successes)
+        set_[f"senders.{sender_id}.name"] = sender_name
+        for s in successes:
+            aid, aname = s["assignee_id"], s["assignee_name"]
+            inc[f"assignees.{aid}.count"] = inc.get(f"assignees.{aid}.count", 0) + 1
+            set_[f"assignees.{aid}.name"] = aname
+
+    if error_types:
+        inc["tasks_failed"] = len(error_types)
+        for etype in error_types:
+            inc[f"errors.{etype}"] = inc.get(f"errors.{etype}", 0) + 1
+
+    update: dict = {}
+    if inc:
+        update["$inc"] = inc
+    if set_:
+        update["$set"] = set_
+
+    try:
+        db = _get_db()
+        db.stats.update_one({"_id": week}, update, upsert=True)
+        doc = db.stats.find_one({"_id": week}) or {}
+        db.stats.update_one(
+            {"_id": week},
+            {"$set": {
+                "unique_senders": len(doc.get("senders", {})),
+                "unique_assignees": len(doc.get("assignees", {})),
+            }},
+        )
+    except Exception as exc:
+        log.warning("Failed to record stats: %s", exc)
+
+
+def init_week_stats() -> None:
+    db = _get_db()
+    week = _week_key()
+    registered = db.users.count_documents({"refresh_token_enc": {"$exists": True}})
+    doc = db.stats.find_one({"_id": week}) or {}
+    db.stats.update_one(
+        {"_id": week},
+        {"$set": {
+            "registered_users": registered,
+            "unique_senders": len(doc.get("senders", {})),
+            "unique_assignees": len(doc.get("assignees", {})),
+        }},
+        upsert=True,
+    )
+    log.info("Weekly stats: week=%s registered_users=%d", week, registered)

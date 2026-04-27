@@ -45,7 +45,8 @@ def _run(text_lines, *, slack=None, tokens=None, create_side_effect=None):
 
     with patch("hex_bot.commands.tasks.get_refresh_token", side_effect=get_token), \
          patch("hex_bot.commands.tasks.get_or_create_tasklist", return_value="LIST1"), \
-         patch("hex_bot.commands.tasks.create_task", **create_kwargs):
+         patch("hex_bot.commands.tasks.create_task", **create_kwargs), \
+         patch("hex_bot.commands.tasks.record_tasks"):
         cmd = TasksCommand(slack_client=slack, logger=log)
         cmd.handle(channel=CHANNEL, user=USER, ts=TS, text_lines=text_lines)
 
@@ -376,3 +377,125 @@ def test_eyes_reaction_added_then_removed():
     slack = _run(["<@BOT> tasks <@U2> do thing"])
     slack.reactions_add.assert_called_once_with(channel=CHANNEL, name="eyes", timestamp=TS)
     slack.reactions_remove.assert_called_once_with(channel=CHANNEL, name="eyes", timestamp=TS)
+
+
+# ---------------------------------------------------------------------------
+# Stats recording
+# ---------------------------------------------------------------------------
+
+def _run_with_stats(text_lines, *, tokens=None, create_side_effect=None):
+    """Like _run but also patches record_tasks and returns (slack, mock_record)."""
+    from hex_bot.commands.tasks import TasksCommand
+
+    slack = _make_slack()
+
+    def get_token(uid):
+        if tokens is None:
+            return "tok"
+        return tokens.get(uid, "tok")
+
+    create_kwargs = (
+        {"side_effect": create_side_effect}
+        if create_side_effect
+        else {"return_value": {"id": "T1"}}
+    )
+
+    with patch("hex_bot.commands.tasks.get_refresh_token", side_effect=get_token), \
+         patch("hex_bot.commands.tasks.get_or_create_tasklist", return_value="LIST1"), \
+         patch("hex_bot.commands.tasks.create_task", **create_kwargs), \
+         patch("hex_bot.commands.tasks.record_tasks") as mock_record:
+        TasksCommand(slack_client=slack, logger=log).handle(
+            channel=CHANNEL, user=USER, ts=TS, text_lines=text_lines,
+        )
+
+    return slack, mock_record
+
+
+def test_stats_recorded_on_success():
+    _, mock_record = _run_with_stats(["<@BOT> tasks <@U2> fix bug"])
+    mock_record.assert_called_once()
+    kw = mock_record.call_args[1]
+    assert kw["sender_id"] == USER
+    assert kw["successes"] == [{"assignee_id": "U2", "assignee_name": "Alice"}]
+    assert kw["error_types"] == []
+
+
+def test_stats_error_unregistered_assignee():
+    _, mock_record = _run_with_stats(
+        ["<@BOT> tasks <@U2> fix bug"],
+        tokens={"U2": None},
+    )
+    mock_record.assert_called_once()
+    kw = mock_record.call_args[1]
+    assert kw["error_types"] == ["unregistered_assignee"]
+    assert kw["successes"] == []
+
+
+def test_stats_error_google_api_error():
+    _, mock_record = _run_with_stats(
+        ["<@BOT> tasks <@U2> fix bug"],
+        create_side_effect=Exception("boom"),
+    )
+    mock_record.assert_called_once()
+    kw = mock_record.call_args[1]
+    assert "google_api_error" in kw["error_types"]
+    assert kw["successes"] == []
+
+
+def test_stats_mixed_success_and_error():
+    call_count = 0
+
+    def flaky(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 2:
+            raise Exception("fail")
+        return {"id": "T1"}
+
+    _, mock_record = _run_with_stats(
+        ["<@BOT> tasks", "* <@U2> ok task", "* <@U3> bad task"],
+        create_side_effect=flaky,
+    )
+    mock_record.assert_called_once()
+    kw = mock_record.call_args[1]
+    assert len(kw["successes"]) == 1
+    assert kw["error_types"] == ["google_api_error"]
+
+
+def test_stats_not_recorded_when_no_tasks_parsed():
+    _, mock_record = _run_with_stats(["<@BOT> tasks"])
+    mock_record.assert_not_called()
+
+
+def test_stats_no_task_text_recorded_as_error():
+    _, mock_record = _run_with_stats(["<@BOT> tasks", "* <@U2>"])
+    mock_record.assert_called_once()
+    kw = mock_record.call_args[1]
+    assert "no_task_text" in kw["error_types"]
+
+
+def test_stats_error_google_refresh_error_on_create_task():
+    from google.auth.exceptions import RefreshError
+    _, mock_record = _run_with_stats(
+        ["<@BOT> tasks <@U2> fix bug"],
+        create_side_effect=RefreshError("token expired"),
+    )
+    mock_record.assert_called_once()
+    kw = mock_record.call_args[1]
+    assert "google_refresh_error" in kw["error_types"]
+    assert kw["successes"] == []
+
+
+def test_stats_error_google_refresh_error_on_get_tasklist():
+    from google.auth.exceptions import RefreshError
+    with patch("hex_bot.commands.tasks.get_refresh_token", return_value="tok"), \
+         patch("hex_bot.commands.tasks.get_or_create_tasklist", side_effect=RefreshError("expired")), \
+         patch("hex_bot.commands.tasks.record_tasks") as mock_record:
+        from hex_bot.commands.tasks import TasksCommand
+        TasksCommand(slack_client=_make_slack(), logger=log).handle(
+            channel=CHANNEL, user=USER, ts=TS,
+            text_lines=["<@BOT> tasks <@U2> fix bug"],
+        )
+    mock_record.assert_called_once()
+    kw = mock_record.call_args[1]
+    assert "google_refresh_error" in kw["error_types"]

@@ -55,8 +55,9 @@ hex-bot/
     config.py            # Central config (reads env vars + .env)
     slack_client.py      # Slack WebClient + signature verification
     dispatcher.py        # Routes app_mention events to subcommands
-    db.py                # MongoDB persistence (users, event dedup, Fernet encryption)
+    db.py                # MongoDB persistence (users, event dedup, Fernet encryption, weekly stats)
     google_tasks.py      # Google Tasks client + tasklist helpers
+    scheduler.py         # Background thread: weekly usage stats snapshot
     commands/
       __init__.py
       base.py            # Command base class + registry (@register_command decorator)
@@ -70,7 +71,7 @@ hex-bot/
   tests/
     __init__.py
     conftest.py          # pytest fixtures (MongoDB hex_test database)
-    test_db.py           # MongoDB CRUD and event deduplication tests
+    test_db.py           # MongoDB CRUD, event deduplication, and stats tests
     test_parsing.py      # Bullet/inline parsing tests
     test_signature.py    # Slack signature verification tests
     test_slack_client.py # Bot user ID caching tests
@@ -82,6 +83,7 @@ hex-bot/
     test_commands_tasks.py  # tasks command tests (parsing, per-assignee logic, due dates, me)
     test_commands_list_config.py  # tasklist and config command tests
     test_commands_help.py         # help command tests
+    test_scheduler.py             # stats scheduler tests
   scripts/
     get_refresh_token.py # One-off helper to obtain a Google refresh token
   Dockerfile             # Production image (python:3.13-slim + gunicorn)
@@ -96,9 +98,10 @@ hex-bot/
 
 Key modules:
 
-- **`app.py`** – `/slack/events` endpoint: URL verification, signature check, event deduplication (MongoDB TTL), dispatches `app_mention` in a background thread to avoid Slack's 3s timeout. `/oauth/google/callback` handles the OAuth redirect from Google.
+- **`app.py`** – `/slack/events` endpoint: URL verification, signature check, event deduplication (MongoDB TTL), dispatches `app_mention` in a background thread to avoid Slack's 3s timeout. `/oauth/google/callback` handles the OAuth redirect from Google. Starts the stats scheduler on startup.
 - **`config.py`** – reads all env vars; calls `load_dotenv()` so `.env` is loaded automatically.
-- **`db.py`** – MongoDB persistence: user CRUD with Fernet-encrypted refresh tokens, event dedup via TTL collection (10 min window).
+- **`db.py`** – MongoDB persistence: user CRUD with Fernet-encrypted refresh tokens, event dedup via TTL collection (10 min window), weekly usage stats (`stats` collection).
+- **`scheduler.py`** – daemon thread that runs `init_week_stats()` on startup then once per week: snapshots registered user count, computes unique sender/assignee counts.
 - **`slack_client.py`** – `WebClient`, `verify_slack_signature`, `get_bot_user_id`.
 - **`dispatcher.py`** – finds the `@Hex <command>` line, routes to the matching command.
 - **`commands/tasks.py`** – parses bullets/inline/`me` self-assignment, resolves names, handles due dates, calls Google Tasks per assignee, posts per-task summary.
@@ -289,7 +292,7 @@ For the full list of commands with usage and examples, type `@Hex help` in Slack
 
 Requires `MONGODB_URI` in the environment (or `.env`). Tests run against a `hex_test` database that is wiped after each test.
 
-The suite has 152 tests covering: command parsing, per-assignee task creation, due dates, self-assignment (`me`), pagination, Google Tasks client (with RefreshError handling), OAuth state management, Slack signature verification, MongoDB encryption/dedup, and all seven commands (including help).
+The suite has 171 tests covering: command parsing, per-assignee task creation, due dates, self-assignment (`me`), pagination, Google Tasks client (with RefreshError handling), OAuth state management, Slack signature verification, MongoDB encryption/dedup/stats, stats scheduler, and all seven commands (including help).
 
 ---
 

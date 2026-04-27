@@ -7,7 +7,7 @@ from typing import List, Tuple, Optional, Dict
 from google.auth.exceptions import RefreshError
 
 from .base import Command, register_command
-from ..db import get_refresh_token
+from ..db import get_refresh_token, record_tasks
 from ..google_tasks import create_task, get_or_create_tasklist
 
 MENTION_PATTERN = re.compile(r"<@([A-Z0-9]+)>")
@@ -312,6 +312,8 @@ class TasksCommand(Command):
         sender_mention = f"<@{user}>"
         successes: List[str] = []
         failures: List[str] = []
+        stat_successes: List[dict] = []
+        stat_errors: List[str] = []
 
         for assignee_id, task_text, due_date in parsed_tasks:
             assignee_mention = f"<@{assignee_id}>"
@@ -319,6 +321,7 @@ class TasksCommand(Command):
             # Mention found but no task text on that line
             if task_text is None:
                 failures.append(f"✗ {assignee_mention} — no task text found on that line.")
+                stat_errors.append("no_task_text")
                 continue
 
             # Each assignee has their own Google account — look up their token.
@@ -331,6 +334,7 @@ class TasksCommand(Command):
                     f'✗ {assignee_mention} is not registered — they need to type "@Hex register" '
                     "to connect their Google Tasks account."
                 )
+                stat_errors.append("unregistered_assignee")
                 continue
 
             # Tasklist lookup uses the assignee's token (their own Google account).
@@ -344,6 +348,7 @@ class TasksCommand(Command):
                         f'✗ {assignee_mention}: Google account disconnected — '
                         f'type "@Hex register" to reconnect.'
                     )
+                    stat_errors.append("google_refresh_error")
                     continue
                 except Exception as exc:
                     self.log.exception("Failed to get tasklist for %s: %s", assignee_id, exc)
@@ -376,17 +381,29 @@ class TasksCommand(Command):
                 successes.append(
                     f"✓ {sender_mention} → {assignee_mention}: {task_text}{due_label}"
                 )
+                stat_successes.append({"assignee_id": assignee_id, "assignee_name": assignee_name})
             except RefreshError:
                 self.log.warning("RefreshError creating task for %s", assignee_id)
                 failures.append(
                     f'✗ {assignee_mention}: {task_text} — Google account disconnected, '
                     f'type "@Hex register" to reconnect.'
                 )
+                stat_errors.append("google_refresh_error")
             except Exception as exc:
                 self.log.exception("Failed to create Google Task for %r: %s", google_title, exc)
                 failures.append(
                     f"✗ {assignee_mention}: {task_text} — task creation failed, please try again."
                 )
+                stat_errors.append("google_api_error")
+
+        if stat_successes or stat_errors:
+            sender_name = self._get_user_display_name(user) if stat_successes else user
+            record_tasks(
+                sender_id=user,
+                sender_name=sender_name,
+                successes=stat_successes,
+                error_types=stat_errors,
+            )
 
         # Build a single reply that reflects the actual outcome from Google
         reply_lines: List[str] = []

@@ -67,3 +67,113 @@ class TestEventDeduplication:
     def test_different_events_are_not_duplicates(self):
         assert db_module.is_duplicate_event("Ev003") is False
         assert db_module.is_duplicate_event("Ev004") is False
+
+
+class TestStats:
+
+    def _db(self):
+        return db_module._get_db()
+
+    def test_record_tasks_creates_week_document(self):
+        with patch.object(db_module, "_week_key", return_value="2026-W17"):
+            db_module.record_tasks(
+                sender_id="U1", sender_name="Alice",
+                successes=[{"assignee_id": "U2", "assignee_name": "Bob"}],
+                error_types=[],
+            )
+        doc = self._db().stats.find_one({"_id": "2026-W17"})
+        assert doc is not None
+        assert doc["tasks_created"] == 1
+        assert doc["senders"]["U1"] == {"name": "Alice", "count": 1}
+        assert doc["assignees"]["U2"] == {"name": "Bob", "count": 1}
+        assert doc["unique_senders"] == 1
+        assert doc["unique_assignees"] == 1
+
+    def test_record_tasks_increments_on_second_call(self):
+        with patch.object(db_module, "_week_key", return_value="2026-W17"):
+            db_module.record_tasks(
+                sender_id="U1", sender_name="Alice",
+                successes=[{"assignee_id": "U2", "assignee_name": "Bob"}],
+                error_types=[],
+            )
+            db_module.record_tasks(
+                sender_id="U1", sender_name="Alice",
+                successes=[{"assignee_id": "U2", "assignee_name": "Bob"}],
+                error_types=[],
+            )
+        doc = self._db().stats.find_one({"_id": "2026-W17"})
+        assert doc["tasks_created"] == 2
+        assert doc["senders"]["U1"]["count"] == 2
+        assert doc["assignees"]["U2"]["count"] == 2
+        assert doc["unique_senders"] == 1
+        assert doc["unique_assignees"] == 1
+
+    def test_record_tasks_errors_incremented(self):
+        with patch.object(db_module, "_week_key", return_value="2026-W17"):
+            db_module.record_tasks(
+                sender_id="U1", sender_name="Alice",
+                successes=[],
+                error_types=["unregistered_assignee", "unregistered_assignee", "google_api_error"],
+            )
+        doc = self._db().stats.find_one({"_id": "2026-W17"})
+        assert doc["tasks_failed"] == 3
+        assert doc["errors"]["unregistered_assignee"] == 2
+        assert doc["errors"]["google_api_error"] == 1
+
+    def test_record_tasks_noop_when_empty(self):
+        with patch.object(db_module, "_week_key", return_value="2026-W17"):
+            db_module.record_tasks(
+                sender_id="U1", sender_name="Alice",
+                successes=[], error_types=[],
+            )
+        doc = self._db().stats.find_one({"_id": "2026-W17"})
+        assert doc is None
+
+    def test_record_tasks_multiple_assignees(self):
+        with patch.object(db_module, "_week_key", return_value="2026-W17"):
+            db_module.record_tasks(
+                sender_id="U1", sender_name="Alice",
+                successes=[
+                    {"assignee_id": "U2", "assignee_name": "Bob"},
+                    {"assignee_id": "U3", "assignee_name": "Charlie"},
+                ],
+                error_types=[],
+            )
+        doc = self._db().stats.find_one({"_id": "2026-W17"})
+        assert doc["tasks_created"] == 2
+        assert doc["senders"]["U1"]["count"] == 2
+        assert doc["assignees"]["U2"]["count"] == 1
+        assert doc["assignees"]["U3"]["count"] == 1
+        assert doc["unique_senders"] == 1
+        assert doc["unique_assignees"] == 2
+
+    def test_init_week_stats_sets_registered_users(self):
+        db_module.upsert_user("U1", "tok1")
+        db_module.upsert_user("U2", "tok2")
+        with patch.object(db_module, "_week_key", return_value="2026-W17"):
+            db_module.init_week_stats()
+        doc = self._db().stats.find_one({"_id": "2026-W17"})
+        assert doc["registered_users"] == 2
+
+    def test_init_week_stats_computes_unique_counts_from_existing_data(self):
+        with patch.object(db_module, "_week_key", return_value="2026-W17"):
+            db_module.record_tasks(
+                sender_id="U1", sender_name="Alice",
+                successes=[
+                    {"assignee_id": "U2", "assignee_name": "Bob"},
+                    {"assignee_id": "U3", "assignee_name": "Charlie"},
+                ],
+                error_types=[],
+            )
+            db_module.init_week_stats()
+        doc = self._db().stats.find_one({"_id": "2026-W17"})
+        assert doc["unique_senders"] == 1
+        assert doc["unique_assignees"] == 2
+
+    def test_init_week_stats_creates_fresh_document_with_zero_unique_counts(self):
+        with patch.object(db_module, "_week_key", return_value="2026-W17"):
+            db_module.init_week_stats()
+        doc = self._db().stats.find_one({"_id": "2026-W17"})
+        assert doc is not None
+        assert doc["unique_senders"] == 0
+        assert doc["unique_assignees"] == 0

@@ -7,12 +7,15 @@ from .config import Config
 from .slack_client import verify_slack_signature
 from .dispatcher import dispatch_app_mention
 from .db import is_duplicate_event
+from . import scheduler
 
 logging.basicConfig(level=Config.LOG_LEVEL)
 log = logging.getLogger(__name__)
 
 def create_app() -> Flask:
     flask_app = Flask(__name__)
+
+    scheduler.start()
 
     @flask_app.route("/healthz", methods=["GET"])
     def healthz():
