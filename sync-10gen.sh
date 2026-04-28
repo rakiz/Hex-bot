@@ -2,8 +2,8 @@
 # Sync app code to both remotes, then update the 10gen deployment branch.
 #
 # Usage:
-#   ./sync-10gen.sh           — push app code + update 10gen with kanopy branch
-#   ./sync-10gen.sh --app-only — push app code to both remotes, skip kanopy rebase
+#   ./sync-10gen.sh           — push app code + update kanopy branch on 10gen
+#   ./sync-10gen.sh --app-only — push app code to both remotes only
 set -e
 
 cd "$(dirname "$0")"
@@ -30,20 +30,18 @@ echo "→ Pushing app code to origin (perso)..."
 git push origin main
 
 echo "→ Pushing app code to 10gen..."
-# --force-with-lease: safe here because the only "extra" commits on 10gen/main
-# are from our own previous kanopy:main push. This avoids a divergence loop.
-git push 10gen main --force-with-lease
+git push 10gen main
 
 if $APP_ONLY; then
   echo "✓ App code synced to both remotes."
   exit 0
 fi
 
-echo "→ Rebasing kanopy branch on main..."
+echo "→ Merging main into kanopy branch..."
 git checkout kanopy
-git rebase main
-echo "→ Pushing kanopy branch to 10gen/main..."
-git push 10gen kanopy:main
+git merge main --no-edit
+echo "→ Pushing kanopy branch to 10gen..."
+git push 10gen kanopy
 git checkout main
 
 echo ""
