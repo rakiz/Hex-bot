@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Sync app code to both remotes, then update the 10gen deployment branch.
+# Sync app code to origin (perso), then merge into the kanopy branch and push
+# that as 10gen/main (which contains app code + internal MongoDB/Kanopy files).
 #
 # Usage:
-#   ./sync-10gen.sh           — push app code + update kanopy branch on 10gen
-#   ./sync-10gen.sh --app-only — push app code to both remotes only
+#   ./sync-10gen.sh           — push to both remotes + update 10gen/main
+#   ./sync-10gen.sh --app-only — push app code to origin only
 set -e
 
 cd "$(dirname "$0")"
@@ -29,22 +30,19 @@ fi
 echo "→ Pushing app code to origin (perso)..."
 git push origin main
 
-echo "→ Pushing app code to 10gen..."
-git push 10gen main
-
 if $APP_ONLY; then
-  echo "✓ App code synced to both remotes."
+  echo "✓ App code pushed to origin."
   exit 0
 fi
 
 echo "→ Merging main into kanopy branch..."
 git checkout kanopy
 git merge main --no-edit
-echo "→ Pushing kanopy branch to 10gen..."
-git push 10gen kanopy
+echo "→ Pushing kanopy to 10gen/main..."
+git push 10gen kanopy:main
 git checkout main
 
 echo ""
-echo "✓ Done. Both remotes are up to date."
-echo "  origin  (perso) : app code"
-echo "  10gen   (interne): app code + Kanopy config"
+echo "✓ Done."
+echo "  origin (perso)  : app code"
+echo "  10gen  (interne): app code + Kanopy config"
