@@ -15,5 +15,5 @@ venv/
 .vscode/
 
 # Local config / secrets
-.env
+.env*
 *.log

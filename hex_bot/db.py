@@ -2,17 +2,19 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import Optional, List
+from typing import List, Optional
 
 from cryptography.fernet import Fernet
-from pymongo import MongoClient, ASCENDING
+from pymongo import ASCENDING, MongoClient
 from pymongo.errors import DuplicateKeyError
 
 from .config import Config
 
 log = logging.getLogger(__name__)
 
-_EVENT_DEDUP_TTL_SECONDS = 600  # keep event IDs for 10 minutes to deduplicate Slack retries
+_EVENT_DEDUP_TTL_SECONDS = (
+    600  # keep event IDs for 10 minutes to deduplicate Slack retries
+)
 
 _client: Optional[MongoClient] = None
 _fernet: Optional[Fernet] = None
@@ -25,7 +27,9 @@ def _get_db():
         db = _client[Config.MONGODB_DB_NAME]
 
         # TTL index: MongoDB automatically deletes documents after expireAfterSeconds.
-        db.events.create_index("created_at", expireAfterSeconds=_EVENT_DEDUP_TTL_SECONDS)
+        db.events.create_index(
+            "created_at", expireAfterSeconds=_EVENT_DEDUP_TTL_SECONDS
+        )
 
         log.info("MongoDB connected (db=%s)", Config.MONGODB_DB_NAME)
     return _client[Config.MONGODB_DB_NAME]
@@ -42,16 +46,19 @@ def _get_fernet() -> Fernet:
 # Event deduplication
 # ---------------------------------------------------------------------------
 
+
 def is_duplicate_event(event_id: str) -> bool:
     """
     Returns True if this event_id was already seen (Slack retry).
     Inserts the event_id atomically — no race condition between check and insert.
     """
     try:
-        _get_db().events.insert_one({
-            "_id": event_id,
-            "created_at": datetime.now(tz=timezone.utc),
-        })
+        _get_db().events.insert_one(
+            {
+                "_id": event_id,
+                "created_at": datetime.now(tz=timezone.utc),
+            }
+        )
         return False
     except DuplicateKeyError:
         return True
@@ -60,6 +67,7 @@ def is_duplicate_event(event_id: str) -> bool:
 # ---------------------------------------------------------------------------
 # Users
 # ---------------------------------------------------------------------------
+
 
 def get_user(slack_user_id: str) -> Optional[dict]:
     """Returns the user document (without decrypting the token) or None."""
@@ -83,11 +91,13 @@ def upsert_user(
     encrypted = _get_fernet().encrypt(refresh_token.encode())
     _get_db().users.update_one(
         {"_id": slack_user_id},
-        {"$set": {
-            "refresh_token_enc": encrypted,
-            "tasklist_name": tasklist_name,
-            "registered_at": datetime.now(tz=timezone.utc),
-        }},
+        {
+            "$set": {
+                "refresh_token_enc": encrypted,
+                "tasklist_name": tasklist_name,
+                "registered_at": datetime.now(tz=timezone.utc),
+            }
+        },
         upsert=True,
     )
 
@@ -109,6 +119,7 @@ def delete_user(slack_user_id: str) -> None:
 # Usage stats
 # ---------------------------------------------------------------------------
 
+
 def _week_key() -> str:
     return datetime.now(tz=timezone.utc).strftime("%G-W%V")
 
@@ -117,7 +128,7 @@ def record_tasks(
     *,
     sender_id: str,
     sender_name: str,
-    successes: List[dict],   # [{"assignee_id": str, "assignee_name": str}, ...]
+    successes: List[dict],  # [{"assignee_id": str, "assignee_name": str}, ...]
     error_types: List[str],  # ["unregistered_assignee", "google_api_error", ...]
 ) -> None:
     if not successes and not error_types:
@@ -153,13 +164,80 @@ def record_tasks(
         doc = db.stats.find_one({"_id": week}) or {}
         db.stats.update_one(
             {"_id": week},
-            {"$set": {
-                "unique_senders": len(doc.get("senders", {})),
-                "unique_assignees": len(doc.get("assignees", {})),
-            }},
+            {
+                "$set": {
+                    "unique_senders": len(doc.get("senders", {})),
+                    "unique_assignees": len(doc.get("assignees", {})),
+                }
+            },
         )
     except Exception as exc:
         log.warning("Failed to record stats: %s", exc)
+
+
+def get_stats_summary(weeks: int = 8, up_to_week: str = None) -> list:
+    """
+    Returns the last `weeks` weekly stats documents, sorted newest first.
+    If `up_to_week` is provided (e.g. "2026-W20"), starts from that week going back.
+    Each document contains aggregated metrics only (no individual user names).
+    """
+    db = _get_db()
+    query = {"_id": {"$lte": up_to_week}} if up_to_week else {}
+    docs = list(db.stats.find(query).sort("_id", -1).limit(weeks))
+    result = []
+    for doc in docs:
+        errors = doc.get("errors", {})
+        result.append(
+            {
+                "week": doc["_id"],
+                "tasks_created": doc.get("tasks_created", 0),
+                "tasks_failed": doc.get("tasks_failed", 0),
+                "registered_users": doc.get("registered_users", 0),
+                "unique_senders": doc.get("unique_senders", 0),
+                "unique_assignees": doc.get("unique_assignees", 0),
+                "errors": errors,
+            }
+        )
+    return result
+
+
+def get_records() -> dict:
+    """
+    Scans all weekly stats to compute all-time records.
+    Returns:
+      - best_week: {week, tasks_created}
+      - max_sent_by_one:   max tasks sent by a single person in a single week
+      - max_assigned_to_one: max tasks assigned to a single person in a single week
+    No names are returned.
+    """
+    db = _get_db()
+    docs = list(db.stats.find({}))
+
+    best_week_doc = None
+    max_sent = 0
+    max_assigned = 0
+
+    for doc in docs:
+        created = doc.get("tasks_created", 0)
+        if best_week_doc is None or created > best_week_doc.get("tasks_created", 0):
+            best_week_doc = doc
+
+        for sender in doc.get("senders", {}).values():
+            max_sent = max(max_sent, sender.get("count", 0))
+
+        for assignee in doc.get("assignees", {}).values():
+            max_assigned = max(max_assigned, assignee.get("count", 0))
+
+    return {
+        "best_week": {
+            "week": best_week_doc["_id"] if best_week_doc else None,
+            "tasks_created": best_week_doc.get("tasks_created", 0)
+            if best_week_doc
+            else 0,
+        },
+        "max_sent_by_one": max_sent,
+        "max_assigned_to_one": max_assigned,
+    }
 
 
 def init_week_stats() -> None:
@@ -169,11 +247,13 @@ def init_week_stats() -> None:
     doc = db.stats.find_one({"_id": week}) or {}
     db.stats.update_one(
         {"_id": week},
-        {"$set": {
-            "registered_users": registered,
-            "unique_senders": len(doc.get("senders", {})),
-            "unique_assignees": len(doc.get("assignees", {})),
-        }},
+        {
+            "$set": {
+                "registered_users": registered,
+                "unique_senders": len(doc.get("senders", {})),
+                "unique_assignees": len(doc.get("assignees", {})),
+            }
+        },
         upsert=True,
     )
     log.info("Weekly stats: week=%s registered_users=%d", week, registered)
