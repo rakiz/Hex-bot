@@ -248,15 +248,15 @@ def create_app() -> Flask:
 
     @flask_app.route("/slack/events", methods=["POST"])
     def slack_events():
-        if not verify_slack_signature(request):
-            return "invalid signature", 403
-
         # force=True because Slack sometimes sends content-type: text/plain
         payload = request.get_json(force=True, silent=True) or {}
 
         # Slack sends this once when you first register the events URL
         if payload.get("type") == "url_verification":
             return jsonify({"challenge": payload.get("challenge")})
+
+        if not verify_slack_signature(request):
+            return "invalid signature", 403
 
         if payload.get("type") == "event_callback":
             event_id = payload.get("event_id")
