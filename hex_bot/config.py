@@ -14,8 +14,9 @@ class Config:
     """
 
     # Slack
-    SLACK_SIGNING_SECRET = os.environ["SLACK_SIGNING_SECRET"]
+    SLACK_SIGNING_SECRET = os.environ.get("SLACK_SIGNING_SECRET")
     SLACK_BOT_TOKEN = os.environ["SLACK_BOT_TOKEN"]
+    SLACK_APP_TOKEN = os.environ.get("SLACK_APP_TOKEN")
     # Optional: auto-discovered via auth.test() on first use if not provided.
     SLACK_BOT_USER_ID = os.environ.get("SLACK_BOT_USER_ID")
 

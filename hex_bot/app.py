@@ -19,6 +19,18 @@ def create_app() -> Flask:
 
     scheduler.start()
 
+    modes = []
+    if Config.SLACK_APP_TOKEN:
+        from .socket_mode import start_socket_mode
+        start_socket_mode(Config.SLACK_APP_TOKEN, Config.SLACK_BOT_TOKEN)
+        modes.append("socket")
+    if Config.SLACK_SIGNING_SECRET:
+        modes.append("http")
+    if not modes:
+        log.warning("No Slack mode configured — set SLACK_APP_TOKEN or SLACK_SIGNING_SECRET")
+    else:
+        log.info("Slack mode(s) active: %s", ", ".join(modes))
+
     @flask_app.route("/", methods=["GET"])
     def index():
         return redirect(url_for("stats_page"))
@@ -246,46 +258,47 @@ def create_app() -> Flask:
 
         return "✅ Connected! You can close this tab and return to Slack.", 200
 
-    @flask_app.route("/slack/events", methods=["POST"])
-    def slack_events():
-        # force=True because Slack sometimes sends content-type: text/plain
-        payload = request.get_json(force=True, silent=True) or {}
+    if Config.SLACK_SIGNING_SECRET:
+        @flask_app.route("/slack/events", methods=["POST"])
+        def slack_events():
+            # force=True because Slack sometimes sends content-type: text/plain
+            payload = request.get_json(force=True, silent=True) or {}
 
-        # Slack sends this once when you first register the events URL
-        if payload.get("type") == "url_verification":
-            return jsonify({"challenge": payload.get("challenge")})
+            # Slack sends this once when you first register the events URL
+            if payload.get("type") == "url_verification":
+                return jsonify({"challenge": payload.get("challenge")})
 
-        if not verify_slack_signature(request):
-            return "invalid signature", 403
+            if not verify_slack_signature(request):
+                return "invalid signature", 403
 
-        if payload.get("type") == "event_callback":
-            event_id = payload.get("event_id")
-            if event_id and is_duplicate_event(event_id):
-                log.warning("Duplicate Slack event ignored: %s", event_id)
-                return "", 200
+            if payload.get("type") == "event_callback":
+                event_id = payload.get("event_id")
+                if event_id and is_duplicate_event(event_id):
+                    log.warning("Duplicate Slack event ignored: %s", event_id)
+                    return "", 200
 
-            event = payload.get("event", {})
-            event_type = event.get("type")
-            log.debug(
-                "event_callback received: type=%s event_id=%s", event_type, event_id
-            )
-
-            if event_type == "app_mention":
-                # Slack expects a 200 within 3 seconds or it retries the event,
-                # which would create duplicate tasks. We fire-and-forget here and
-                # return immediately below.
-                threading.Thread(
-                    target=dispatch_app_mention,
-                    args=(event,),
-                    daemon=True,  # dies with the main process, no cleanup needed
-                ).start()
-            else:
-                log.warning(
-                    "Unhandled event type: %s (check Slack app event subscriptions)",
-                    event_type,
+                event = payload.get("event", {})
+                event_type = event.get("type")
+                log.debug(
+                    "event_callback received: type=%s event_id=%s", event_type, event_id
                 )
 
-        return "", 200
+                if event_type == "app_mention":
+                    # Slack expects a 200 within 3 seconds or it retries the event,
+                    # which would create duplicate tasks. We fire-and-forget here and
+                    # return immediately below.
+                    threading.Thread(
+                        target=dispatch_app_mention,
+                        args=(event,),
+                        daemon=True,  # dies with the main process, no cleanup needed
+                    ).start()
+                else:
+                    log.warning(
+                        "Unhandled event type: %s (check Slack app event subscriptions)",
+                        event_type,
+                    )
+
+            return "", 200
 
     return flask_app
 

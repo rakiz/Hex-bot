@@ -51,7 +51,8 @@ The **assignee** must be registered with `@Hex register` (not the sender). If an
 hex-bot/
   hex_bot/
     __init__.py
-    app.py               # Flask entrypoint (/slack/events, /healthz, /oauth/google/callback)
+    app.py               # Flask entrypoint (/healthz, /oauth/google/callback, /slack/events if HTTP mode)
+    socket_mode.py       # Socket Mode listener (started if SLACK_APP_TOKEN is set)
     config.py            # Central config (reads env vars + .env)
     slack_client.py      # Slack WebClient + signature verification
     dispatcher.py        # Routes app_mention events to subcommands
@@ -120,9 +121,18 @@ Create a `.env` file at the project root (never commit it). `config.py` loads it
 
 From your **Slack app**:
 
-- `SLACK_SIGNING_SECRET` – **Basic Information → App Credentials → Signing Secret**.
 - `SLACK_BOT_TOKEN` – **OAuth & Permissions → Bot User OAuth Token**.
 - `SLACK_BOT_USER_ID` *(optional)* – value from `auth.test()["user_id"]`; auto-discovered if not set.
+
+Hex supports two event-delivery modes. You can enable one or both simultaneously — at startup the app logs which modes are active.
+
+**HTTP mode** (Slack pushes events to your URL):
+- `SLACK_SIGNING_SECRET` – **Basic Information → App Credentials → Signing Secret**. When set, the `/slack/events` endpoint is registered and accepts incoming webhooks from Slack.
+
+**Socket Mode** (your bot opens a WebSocket to Slack — no public URL required):
+- `SLACK_APP_TOKEN` – **Basic Information → App-Level Tokens → Generate Token** (scope: `connections:write`). When set, a Socket Mode listener starts in a background thread.
+
+> Socket Mode is recommended for deployments behind SSO/auth proxies (e.g. Kanopy) where Slack cannot reach the `/slack/events` URL directly.
 
 ### 3.2. Google Tasks
 
@@ -155,9 +165,14 @@ From your **Google Cloud project**:
 ### Example `.env`
 
 ```dotenv
-SLACK_SIGNING_SECRET=...
 SLACK_BOT_TOKEN=xoxb-...
 SLACK_BOT_USER_ID=U0ACK1M63S8
+
+# HTTP mode (one or both can be set)
+SLACK_SIGNING_SECRET=...
+
+# Socket Mode
+SLACK_APP_TOKEN=xapp-...
 
 GOOGLE_CLIENT_ID=...apps.googleusercontent.com
 GOOGLE_CLIENT_SECRET=...
